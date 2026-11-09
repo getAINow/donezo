@@ -940,11 +940,21 @@ def knowledge_graph(workspace_id):
             did = f"decision:{d['id']}"
             nodes.append({"id": did, "kind": "decision", "label": d["decision"][:120], "detail": d["reason"][:200]})
             links.append({"source": owner, "target": did, "kind": "recorded", "count": 1})
-    for r in _rows("SELECT from_session f, to_session t, COUNT(*) n FROM signals WHERE workspace_id = ? "
-                   "GROUP BY from_session, to_session", (workspace_id,)):
-        if r["f"] in aid and r["t"] in aid and r["f"] != r["t"]:
-            links.append({"source": aid[r["f"]], "target": aid[r["t"]], "kind": "signals", "count": r["n"]})
-    return {"nodes": nodes, "links": links}
+    # from_session is the sender's role name (enqueue_signal), maybe an old one; to_session is an id.
+    senders, pairs = {}, {}
+    for r in _rows("SELECT from_session f, to_session t, expects_reply e, substr(message, 1, 400) m FROM signals "
+                   "WHERE workspace_id = ? AND dry_run = 0 AND status NOT IN ('denied', 'blocked') "
+                   "ORDER BY id DESC", (workspace_id,)):
+        if r["f"] not in senders:
+            senders[r["f"]] = aid.get(r["f"]) or by_name.get(so.current_name(r["f"], workspace_id))
+        src, dst, kind = senders[r["f"]], aid.get(r["t"]), "asks" if r["e"] else "tells"
+        if src and dst and src != dst:
+            lk = pairs.setdefault((src, dst, kind), {"source": src, "target": dst, "kind": kind,
+                                                     "count": 0, "recent": []})
+            lk["count"] += 1
+            if len(lk["recent"]) < 3:
+                lk["recent"].append(" ".join((r["m"] or "").split())[:100])
+    return {"nodes": nodes, "links": links + list(pairs.values())}
 
 
 def list_for_director(director_id):

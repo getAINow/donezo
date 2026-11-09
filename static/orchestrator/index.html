@@ -612,7 +612,11 @@
   .kg-l { stroke: var(--border-strong); stroke-width: 1.2; }
   .kg-l.kg-recorded { stroke: var(--amber); stroke-opacity: .45; }
   .kg-l.kg-links { stroke: var(--green); stroke-dasharray: 4 3; stroke-width: 1.5; }
-  .kg-l.kg-signals { stroke: var(--accent); stroke-opacity: .8; stroke-width: 2.5; }
+  .kg-l.kg-asks, .kg-l.kg-tells { fill: none; stroke-linecap: round; }
+  .kg-l.kg-asks { stroke: var(--accent); stroke-opacity: .85; }
+  .kg-l.kg-tells { stroke: var(--accent); stroke-opacity: .45; stroke-dasharray: 6 4; }
+  #kg-arrow-asks path { fill: var(--accent); }
+  #kg-arrow-tells path { fill: var(--accent); fill-opacity: .6; }
   .kg-n { cursor: grab; }
   .kg-n:active { cursor: grabbing; }
   .kg-agent { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
@@ -1387,7 +1391,7 @@
           title="Sub-agents your directors delegated to, their verification, and the team's rules">
           Team<span id="team-live" class="tab-count" hidden></span></button>
         <button id="tab-btn-knowledge" class="tab" role="tab" onclick="switchTab('knowledge')"
-          title="What the agents know: their memory files, recorded decisions and who signals whom">Knowledge</button>
+          title="What the agents know: their memory files, recorded decisions and who asks and reports to whom">Knowledge</button>
         <button id="tab-btn-history" class="tab" role="tab" onclick="switchTab('history')"
           title="Signal queue and run history">Activity</button>
       </div>
@@ -1549,7 +1553,14 @@
         <span><svg width="14" height="14"><circle class="kg-agent" cx="7" cy="7" r="6"/></svg>Agent</span>
         <span><svg width="14" height="14"><rect class="kg-memory" x="2" y="2" width="10" height="10" rx="2"/></svg>Memory</span>
         <span><svg width="14" height="14"><path class="kg-decision" d="M7 1 13 7 7 13 1 7Z"/></svg>Decision</span>
-        <span><svg width="22" height="14"><line class="kg-l kg-signals" x1="1" y1="7" x2="21" y2="7"/></svg>Signals (thicker = more)</span>
+        <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+          <marker id="kg-arrow-asks" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9"
+            markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5 0 10Z"/></marker>
+          <marker id="kg-arrow-tells" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9"
+            markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5 0 10Z"/></marker>
+        </defs></svg>
+        <span><svg width="26" height="14"><path class="kg-l kg-asks" d="M1 7H24" marker-end="url(#kg-arrow-asks)" style="stroke-width:2px"/></svg>Asked (expects a reply)</span>
+        <span><svg width="26" height="14"><path class="kg-l kg-tells" d="M1 7H24" marker-end="url(#kg-arrow-tells)" style="stroke-width:2px"/></svg>Reported / answered</span>
         <span><svg width="22" height="14"><line class="kg-l kg-links" x1="1" y1="7" x2="21" y2="7"/></svg>[[link]]</span>
       </div>
       <div id="kg-empty" class="cv-empty" hidden>No shared knowledge in this workspace yet: no memories, decisions or signals.</div>
