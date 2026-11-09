@@ -48,6 +48,8 @@ Never guess a file path, a symbol or an API. Read the real thing first.
 - `record_decision(from_role="<ROLE_NAME>", decision=..., reason=..., evidence=...)` — log every
   decision that shapes the work (a design chosen, a unit cut, a finding dismissed). The user
   reviews this trail on the Team tab.
+- `search_knowledge(from_role="<ROLE_NAME>", query="...")` — when you need information from
+  another role, search first and `send_signal` only if nothing relevant comes back.
 
 Spawn sub-agents as the last thing in your turn, then end the turn. The orchestrator messages
 you when each one finishes: `[SUB-AGENT PASSED]` after an independent verifier observed

@@ -130,6 +130,16 @@ def migrate(conn):
             ts TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_team_decisions ON team_decisions(workspace_id, id);
+        -- search_knowledge calls. hits = node ids of knowledge_graph (memory:<path>, decision:<id>), never text.
+        CREATE TABLE IF NOT EXISTS knowledge_lookups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id TEXT NOT NULL,
+            session_id TEXT NOT NULL DEFAULT '',
+            query TEXT NOT NULL,
+            hits TEXT NOT NULL DEFAULT '[]',
+            ts TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_lookups ON knowledge_lookups(workspace_id, id);
         -- Đồ thị bàn giao: ai được signal cho ai. Chỉ CẮN khi graph_mode của workspace = enforced.
         CREATE TABLE IF NOT EXISTS team_edges (
             workspace_id TEXT NOT NULL,
@@ -911,6 +921,13 @@ def memory_entries(ws, sessions=None):
             yield sorted(set(names)), f, meta.get("name", f.stem), meta.get("description", ""), body
 
 
+def log_lookup(workspace_id, from_role, query, hits):
+    so = _so()
+    s = so.get_session_by_name(so.current_name(from_role, workspace_id), workspace_id)
+    _exec("INSERT INTO knowledge_lookups (workspace_id, session_id, query, hits, ts) VALUES (?, ?, ?, ?, ?)",
+          (workspace_id, s["id"] if s else "", query[:200], json.dumps(hits), so._now()))
+
+
 def knowledge_graph(workspace_id):
     """Read-only graph for the Knowledge tab: top-level agents, their memories and decisions."""
     so = _so()
@@ -940,6 +957,29 @@ def knowledge_graph(workspace_id):
             did = f"decision:{d['id']}"
             nodes.append({"id": did, "kind": "decision", "label": d["decision"][:120], "detail": d["reason"][:200]})
             links.append({"source": owner, "target": did, "kind": "recorded", "count": 1})
+    ids = {n["id"] for n in nodes}
+    # shortcut: newest 2000 lookups only, like the decision cap; page it if old lookups matter.
+    looked, gaps = {}, {}
+    for r in _rows("SELECT k.session_id, k.query, k.hits, s.parent_id FROM knowledge_lookups k LEFT JOIN sessions s "
+                   "ON s.id = k.session_id WHERE k.workspace_id = ? ORDER BY k.id DESC LIMIT 2000", (workspace_id,)):
+        src = aid.get(r["session_id"]) or aid.get(r["parent_id"] or "")
+        if not src:
+            continue
+        q = " ".join(r["query"].split())[:100]
+        hits = json.loads(r["hits"])
+        if not hits:
+            g = gaps.setdefault(src, [])
+            if q not in g and len(g) < 3:
+                g.append(q)
+        for h in (h for h in hits if h in ids):
+            lk = looked.setdefault((src, h), {"source": src, "target": h, "kind": "looked_up",
+                                              "count": 0, "recent": []})
+            lk["count"] += 1
+            if q not in lk["recent"] and len(lk["recent"]) < 3:
+                lk["recent"].append(q)
+    for n in nodes:
+        if n["kind"] == "agent":
+            n["gaps"] = gaps.get(n["id"], [])
     # from_session is the sender's role name (enqueue_signal), maybe an old one; to_session is an id.
     senders, pairs = {}, {}
     for r in _rows("SELECT from_session f, to_session t, expects_reply e, substr(message, 1, 400) m FROM signals "
@@ -954,7 +994,7 @@ def knowledge_graph(workspace_id):
             lk["count"] += 1
             if len(lk["recent"]) < 3:
                 lk["recent"].append(" ".join((r["m"] or "").split())[:100])
-    return {"nodes": nodes, "links": links + list(pairs.values())}
+    return {"nodes": nodes, "links": links + list(looked.values()) + list(pairs.values())}
 
 
 def list_for_director(director_id):
