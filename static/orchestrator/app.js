@@ -3808,18 +3808,20 @@ async function openSessionRun(sid) {
 }
 window.openSessionRun = openSessionRun;
 
-// ── Tabs: Agents (canvas) / History / Team ──────────────────────────────────
-const TABS = ["agents", "history", "team"];
+// ── Tabs: Agents (canvas) / History / Team / Knowledge ──────────────────────
+const TABS = ["agents", "history", "team", "knowledge"];
 function switchTab(name) {
   if (!TABS.includes(name)) name = "agents";   // tab đã bỏ (vd 'boards') còn lưu trong localStorage
   $("tab-agents").hidden = name !== "agents";
   $("tab-history").hidden = name !== "history";
   $("tab-team").hidden = name !== "team";
+  $("tab-knowledge").hidden = name !== "knowledge";
   for (const t of TABS) {
     $("tab-btn-" + t).classList.toggle("active", name === t);
     $("tab-btn-" + t).setAttribute("aria-selected", name === t);
   }
   if (name === "team") teamLoad().catch((e) => console.error(e));
+  if (name === "knowledge") kgLoad().catch((e) => console.error(e));
   // Transcript đang là cột của Activity: rời tab thì đóng, kẻo drawer kẹt trong tab bị ẩn.
   if (name !== "history" && $("drawer").parentElement === $("tab-history")) closeDrawer();
   // Key theo workspace: hai pane mở cùng lúc dùng chung một key thì đổi tab ở pane này
@@ -3833,6 +3835,126 @@ function switchTab(name) {
   });
 }
 window.switchTab = switchTab;
+
+// ── Knowledge: đồ thị CHỈ ĐỌC (agent, memory, decision). Chỉ GET; kéo node là tương tác duy nhất.
+// Force layout tự viết: link kéo, node đẩy nhau, kéo nhẹ về tâm. alpha nguội dần rồi dừng rAF.
+const KG_R = { agent: 15, memory: 7, decision: 6 };
+const KG_LEN = { owns: 70, recorded: 45, links: 60, signals: 160 };
+let kg = null, kgRaf = 0, kgSeq = 0;
+
+async function kgLoad() {
+  const my = ++kgSeq;
+  const g = await api("/api/knowledge?" + new URLSearchParams(currentWS ? { workspace_id: currentWS } : {}));
+  if (my === kgSeq) kgRender(g);
+}
+
+function kgRender(g) {
+  const svg = $("kg-svg"), old = new Map((kg ? kg.nodes : []).map((n) => [n.id, n]));
+  const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+  const nodes = g.nodes.map((n, i) => {
+    const o = old.get(n.id);
+    // Xoắn ốc góc vàng: vị trí đầu xác định, không trùng nhau.
+    return { ...n, r: KG_R[n.kind] || 6, x: o ? o.x : w / 2 + 12 * Math.sqrt(i + 1) * Math.cos(i * 2.4),
+      y: o ? o.y : h / 2 + 12 * Math.sqrt(i + 1) * Math.sin(i * 2.4), vx: 0, vy: 0, fixed: o ? o.fixed : false };
+  });
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const links = g.links.filter((l) => byId.has(l.source) && byId.has(l.target))
+    .map((l) => ({ ...l, s: byId.get(l.source), t: byId.get(l.target) }));
+  $("kg-empty").hidden = links.length > 0;
+  const shape = (n) => n.kind === "agent" ? `<circle class="kg-agent" r="${n.r}"/>`
+    : n.kind === "memory" ? `<rect class="kg-memory" x="${-n.r}" y="${-n.r}" width="${2 * n.r}" height="${2 * n.r}" rx="2"/>`
+    : `<path class="kg-decision" d="M0 ${-n.r - 1}L${n.r + 1} 0 0 ${n.r + 1}${-n.r - 1} 0Z"/>`;
+  svg.innerHTML = `<g>${links.map((l) => `<line class="kg-l kg-${esc(l.kind)}"${l.kind === "signals"
+    ? ` style="stroke-width:${Math.min(8, 1.5 + 1.5 * Math.log2(l.count))}px"` : ""}><title>${esc(l.s.label)} → ${
+    esc(l.t.label)}${l.kind === "signals" ? ` · ${l.count} signal${l.count === 1 ? "" : "s"}` : ` · ${esc(l.kind)}`}</title></line>`).join("")
+    }</g><g>${nodes.map((n, i) => `<g class="kg-n" data-i="${i}">${shape(n)}<title>${esc(n.label)}${
+      n.detail ? "\n" + esc(n.detail) : ""}</title>${n.kind === "agent"
+      ? `<text text-anchor="middle" y="${n.r + 14}">${esc(n.label)}</text>` : ""}</g>`).join("")}</g>`;
+  const [lg, ng] = svg.children;
+  links.forEach((l, i) => { l.el = lg.children[i]; });
+  nodes.forEach((n, i) => { n.el = ng.children[i]; });
+  kg = { nodes, links, w, h, alpha: old.size ? 0.3 : 1, drag: null };
+  kgDraw();
+  kgKick(kg.alpha);
+}
+
+function kgKick(a) {
+  if (!kg) return;
+  kg.alpha = Math.max(kg.alpha, a);
+  if (!kgRaf) kgRaf = requestAnimationFrame(kgFrame);
+}
+
+function kgFrame() {
+  kgRaf = 0;
+  if (!kg || $("tab-knowledge").hidden) return;
+  kgStep();
+  kgDraw();
+  if (kg.drag || kg.alpha > 0.02) kgRaf = requestAnimationFrame(kgFrame);
+}
+
+function kgStep() {
+  const { nodes, links, w, h } = kg, a = kg.alpha;
+  for (let i = 0; i < nodes.length; i++) {
+    const p = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const q = nodes[j];
+      let dx = q.x - p.x, dy = q.y - p.y, d2 = dx * dx + dy * dy;
+      if (d2 > 40000) continue;
+      if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+      const f = (p.r + q.r) * 6 * a / d2;
+      p.vx -= dx * f; p.vy -= dy * f; q.vx += dx * f; q.vy += dy * f;
+    }
+    p.vx += (w / 2 - p.x) * 0.01 * a; p.vy += (h / 2 - p.y) * 0.01 * a;
+  }
+  for (const l of links) {
+    const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const k = (d - (KG_LEN[l.kind] || 60)) / d * 0.1 * a;
+    l.s.vx += dx * k; l.s.vy += dy * k; l.t.vx -= dx * k; l.t.vy -= dy * k;
+  }
+  for (const n of nodes) {
+    if (n.fixed) { n.vx = n.vy = 0; continue; }
+    n.vx *= 0.6; n.vy *= 0.6;
+    n.x = Math.max(n.r, Math.min(w - n.r, n.x + n.vx));
+    n.y = Math.max(n.r, Math.min(h - n.r - (n.kind === "agent" ? 16 : 0), n.y + n.vy));
+  }
+  if (!kg.drag) kg.alpha *= 0.98;
+}
+
+function kgDraw() {
+  for (const n of kg.nodes) n.el.setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
+  for (const l of kg.links) {
+    l.el.setAttribute("x1", l.s.x.toFixed(1)); l.el.setAttribute("y1", l.s.y.toFixed(1));
+    l.el.setAttribute("x2", l.t.x.toFixed(1)); l.el.setAttribute("y2", l.t.y.toFixed(1));
+  }
+}
+
+// Kéo: node theo con trỏ, thả ra thì ghim tại chỗ.
+$("kg-svg").addEventListener("pointerdown", (e) => {
+  const el = e.target.closest(".kg-n");
+  if (!kg || !el || e.button > 0) return;
+  const n = kg.nodes[+el.dataset.i], box = $("kg-svg").getBoundingClientRect();
+  kg.drag = { n, dx: n.x - (e.clientX - box.left), dy: n.y - (e.clientY - box.top), id: e.pointerId };
+  $("kg-svg").setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+$("kg-svg").addEventListener("pointermove", (e) => {
+  const d = kg && kg.drag;
+  if (!d || d.id !== e.pointerId) return;
+  const box = $("kg-svg").getBoundingClientRect();
+  d.n.x = Math.max(d.n.r, Math.min(kg.w - d.n.r, e.clientX - box.left + d.dx));
+  d.n.y = Math.max(d.n.r, Math.min(kg.h - d.n.r, e.clientY - box.top + d.dy));
+  d.n.fixed = true;
+  kgDraw();
+  kgKick(0.3);
+});
+for (const t of ["pointerup", "pointercancel"]) $("kg-svg").addEventListener(t, (e) => {
+  if (kg && kg.drag && kg.drag.id === e.pointerId) kg.drag = null;
+});
+window.addEventListener("resize", () => {
+  if (!kg || $("tab-knowledge").hidden) return;
+  kg.w = $("kg-svg").clientWidth || kg.w; kg.h = $("kg-svg").clientHeight || kg.h;
+  kgKick(0.1);
+});
 
 // Append 1 event live nếu drawer đang mở đúng run đó.
 // Trùng kind+summary với row cuối → bump ×N thay vì thêm row (chống spam system lặp).

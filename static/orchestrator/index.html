@@ -605,6 +605,27 @@
   #tab-history { flex: 1; min-height: 0; width: 100%; display: flex; }
   #tab-history[hidden] { display: none; }
 
+  /* ── Knowledge: đồ thị chỉ đọc ─────────────────────────────────────────── */
+  #tab-knowledge { flex: 1; min-height: 0; width: 100%; position: relative; overflow: hidden; background: var(--canvas); }
+  #tab-knowledge[hidden] { display: none; }
+  .kg-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; }
+  .kg-l { stroke: var(--border-strong); stroke-width: 1.2; }
+  .kg-l.kg-recorded { stroke: var(--amber); stroke-opacity: .45; }
+  .kg-l.kg-links { stroke: var(--green); stroke-dasharray: 4 3; stroke-width: 1.5; }
+  .kg-l.kg-signals { stroke: var(--accent); stroke-opacity: .8; stroke-width: 2.5; }
+  .kg-n { cursor: grab; }
+  .kg-n:active { cursor: grabbing; }
+  .kg-agent { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+  .kg-memory { fill: var(--green); stroke: var(--card); stroke-width: 1.5; }
+  .kg-decision { fill: var(--amber); stroke: var(--card); stroke-width: 1.5; }
+  .kg-n:hover > :first-child { stroke: var(--text); }
+  .kg-n text { fill: var(--text); font: 600 12px var(--font); paint-order: stroke; stroke: var(--canvas);
+    stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+  .kg-legend { position: absolute; left: 12px; top: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px;
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-ctl); background: var(--panel);
+    color: var(--muted); font-size: 12px; max-width: calc(100% - 24px); }
+  .kg-legend span { display: inline-flex; align-items: center; gap: 5px; }
+
   /* ── Team: đội sub-agent của director ─────────────────────────────────── */
   #tab-team { flex: 1; min-height: 0; overflow: auto; width: 100%; padding: 20px; }
   #tab-team[hidden] { display: none; }
@@ -1365,6 +1386,8 @@
         <button id="tab-btn-team" class="tab" role="tab" onclick="switchTab('team')"
           title="Sub-agents your directors delegated to, their verification, and the team's rules">
           Team<span id="team-live" class="tab-count" hidden></span></button>
+        <button id="tab-btn-knowledge" class="tab" role="tab" onclick="switchTab('knowledge')"
+          title="What the agents know: their memory files, recorded decisions and who signals whom">Knowledge</button>
         <button id="tab-btn-history" class="tab" role="tab" onclick="switchTab('history')"
           title="Signal queue and run history">Activity</button>
       </div>
@@ -1517,6 +1540,19 @@
           </aside>
         </div>
       </div>
+    </div>
+
+    <!-- Chỉ đọc: kéo node là tương tác duy nhất. Toàn bộ do kgRender() dựng. -->
+    <div id="tab-knowledge" hidden>
+      <svg id="kg-svg" class="kg-svg" role="img" aria-label="Knowledge graph"></svg>
+      <div class="kg-legend" aria-label="Legend">
+        <span><svg width="14" height="14"><circle class="kg-agent" cx="7" cy="7" r="6"/></svg>Agent</span>
+        <span><svg width="14" height="14"><rect class="kg-memory" x="2" y="2" width="10" height="10" rx="2"/></svg>Memory</span>
+        <span><svg width="14" height="14"><path class="kg-decision" d="M7 1 13 7 7 13 1 7Z"/></svg>Decision</span>
+        <span><svg width="22" height="14"><line class="kg-l kg-signals" x1="1" y1="7" x2="21" y2="7"/></svg>Signals (thicker = more)</span>
+        <span><svg width="22" height="14"><line class="kg-l kg-links" x1="1" y1="7" x2="21" y2="7"/></svg>[[link]]</span>
+      </div>
+      <div id="kg-empty" class="cv-empty" hidden>No shared knowledge in this workspace yet: no memories, decisions or signals.</div>
     </div>
 
     <div id="tab-history" hidden>
