@@ -3839,7 +3839,8 @@ window.switchTab = switchTab;
 // ── Knowledge: đồ thị CHỈ ĐỌC (agent, memory, decision). Chỉ GET; kéo node là tương tác duy nhất.
 // Force layout tự viết: link kéo, node đẩy nhau, kéo nhẹ về tâm. alpha nguội dần rồi dừng rAF.
 const KG_R = { agent: 15, memory: 7, decision: 6 };
-const KG_LEN = { owns: 70, recorded: 45, links: 60, signals: 160 };
+const KG_LEN = { owns: 70, recorded: 45, links: 60, asks: 160, tells: 160 };
+const KG_SAY = { asks: "asked", tells: "reported to" };
 let kg = null, kgRaf = 0, kgSeq = 0;
 
 async function kgLoad() {
@@ -3864,9 +3865,11 @@ function kgRender(g) {
   const shape = (n) => n.kind === "agent" ? `<circle class="kg-agent" r="${n.r}"/>`
     : n.kind === "memory" ? `<rect class="kg-memory" x="${-n.r}" y="${-n.r}" width="${2 * n.r}" height="${2 * n.r}" rx="2"/>`
     : `<path class="kg-decision" d="M0 ${-n.r - 1}L${n.r + 1} 0 0 ${n.r + 1}${-n.r - 1} 0Z"/>`;
-  svg.innerHTML = `<g>${links.map((l) => `<line class="kg-l kg-${esc(l.kind)}"${l.kind === "signals"
-    ? ` style="stroke-width:${Math.min(8, 1.5 + 1.5 * Math.log2(l.count))}px"` : ""}><title>${esc(l.s.label)} → ${
-    esc(l.t.label)}${l.kind === "signals" ? ` · ${l.count} signal${l.count === 1 ? "" : "s"}` : ` · ${esc(l.kind)}`}</title></line>`).join("")
+  svg.innerHTML = `<g>${links.map((l) => KG_SAY[l.kind]
+    ? `<path class="kg-l kg-${l.kind}" marker-end="url(#kg-arrow-${l.kind})" style="stroke-width:${
+      Math.min(8, 1.5 + 1.5 * Math.log2(l.count))}px"><title>${esc(l.s.label)} ${KG_SAY[l.kind]} ${esc(l.t.label)} · ${
+      l.count}${(l.recent || []).map((m) => "\n" + esc(m)).join("")}</title></path>`
+    : `<line class="kg-l kg-${esc(l.kind)}"><title>${esc(l.s.label)} → ${esc(l.t.label)} · ${esc(l.kind)}</title></line>`).join("")
     }</g><g>${nodes.map((n, i) => `<g class="kg-n" data-i="${i}">${shape(n)}<title>${esc(n.label)}${
       n.detail ? "\n" + esc(n.detail) : ""}</title>${n.kind === "agent"
       ? `<text text-anchor="middle" y="${n.r + 14}">${esc(n.label)}</text>` : ""}</g>`).join("")}</g>`;
@@ -3923,8 +3926,18 @@ function kgStep() {
 function kgDraw() {
   for (const n of kg.nodes) n.el.setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
   for (const l of kg.links) {
-    l.el.setAttribute("x1", l.s.x.toFixed(1)); l.el.setAttribute("y1", l.s.y.toFixed(1));
-    l.el.setAttribute("x2", l.t.x.toFixed(1)); l.el.setAttribute("y2", l.t.y.toFixed(1));
+    const { s, t } = l;
+    if (!KG_SAY[l.kind]) {
+      l.el.setAttribute("x1", s.x.toFixed(1)); l.el.setAttribute("y1", s.y.toFixed(1));
+      l.el.setAttribute("x2", t.x.toFixed(1)); l.el.setAttribute("y2", t.y.toFixed(1));
+      continue;
+    }
+    // Bend to the left of travel, so A→B and B→A take opposite sides; ends stop at the circles.
+    const dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy) || 1, off = Math.max(24, d * 0.2);
+    const cx = (s.x + t.x) / 2 + dy / d * off, cy = (s.y + t.y) / 2 - dx / d * off;
+    const end = (n, pad) => { const ex = cx - n.x, ey = cy - n.y, e = Math.hypot(ex, ey) || 1;
+      return `${(n.x + ex / e * pad).toFixed(1)} ${(n.y + ey / e * pad).toFixed(1)}`; };
+    l.el.setAttribute("d", `M${end(s, s.r)}Q${cx.toFixed(1)} ${cy.toFixed(1)} ${end(t, t.r + 2)}`);
   }
 }
 

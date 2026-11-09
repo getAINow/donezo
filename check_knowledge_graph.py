@@ -5,7 +5,10 @@ What can go wrong quietly:
   - another workspace's agents, memories or decisions showing up in this one;
   - a sub-agent drawn as an agent, or a signal to one drawn as a link to nowhere;
   - a [[name]] that matches no memory turning into a link;
-  - two signals between the same pair drawn as two links instead of one with count 2.
+  - two signals between the same pair drawn as two links instead of one with count 2;
+  - signals seeded unlike production: from_session is the sender's NAME (maybe an old one after a
+    rename), to_session an id. Seeding ids on both sides hid that no real signal ever drew a link;
+  - a dry run, a denied signal, `team` or a human drawn as an agent talking.
 
 Runs against a temp HOME (so the DB is throwaway) and a temp CLAUDE_CONFIG_DIR — never the real ~/.claude.
 
@@ -29,7 +32,7 @@ TMP = Path(tempfile.mkdtemp(prefix="check_knowledge_graph_"))
 os.environ.update({"HOME": str(TMP), "USERPROFILE": str(TMP), "ORCH_DB": "check_knowledge_graph",
                    "ORCH_WORKSPACES_ROOT": str(TMP / "ws"), "ORCH_DRY_RUN": "1",
                    "CLAUDE_CONFIG_DIR": str(TMP / "claude"), "CLAUDE_BIN": sys.executable,
-                   "ORCH_AGY_BIN": sys.executable})
+                   "ORCH_AGY_BIN": sys.executable, "ORCH_PAIR_SIGNAL_CAP": "99"})
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import httpx                        # noqa: E402
@@ -60,9 +63,8 @@ def memory(cwd, stem, body=""):
     return "memory:" + str(folder / f"{stem}.md")
 
 
-def signal(ws, frm, to):
-    team._exec("INSERT INTO signals (workspace_id, from_session, to_session, message, created_at) "
-               "VALUES (?, ?, ?, 'hi', '2026-01-01')", (ws, frm, to))
+def signal(ws, frm, to, msg="hi", **kw):
+    return so.enqueue_signal(to, msg, from_session=frm, workspace_id=ws, **kw)
 
 
 W, W2 = "ws_w", "ws_w2"
@@ -73,6 +75,8 @@ so.register_session("s-c", "C", cwd=str(C), workspace_id=W)
 so.register_session("s-s", "S", cwd=str(AB), workspace_id=W)
 team._set_team("s-s", "s-a", "subagent")
 so.register_session("s-x", "X", cwd=str(OTHER), workspace_id=W2)
+so.register_session("s-r", "R-old", cwd=str(C), workspace_id=W)
+assert so.rename_session("s-r", "R", W) == ""
 
 m1 = memory(AB, "m1", "See [[m2]] and [[missing]].")
 m2 = memory(AB, "m2")
@@ -80,10 +84,21 @@ m3 = memory(AB, "m3")
 memory(OTHER, "m1", "same filename, other workspace")
 team.record_decision("A", "Use the flag", "rollback is one toggle", "", W)
 team.record_decision("X", "Other tenant's call", "", "", W2)
-signal(W, "s-a", "s-b")
-signal(W, "s-a", "s-b")
-signal(W, "s-a", "s-s")
-signal(W2, "s-x", "s-x")
+LONG = "line one\n\n  line two " + "x" * 200
+signal(W, "A", "s-b", "first ask")
+signal(W, "A", "s-b", LONG)
+signal(W, "B", "s-a", "done, here is the report", expects_reply=0)
+# A row written before enqueue_signal mapped old names: still the old name, still R's signal.
+team._exec("INSERT INTO signals (workspace_id, from_session, to_session, message, created_at) "
+           "VALUES (?, 'R-old', 's-c', 'oldest', '2026-01-01')", (W,))
+for i in range(3):
+    signal(W, "R-old", "s-c", f"ask {i}")
+signal(W, "A", "s-c", "pretend", dry_run=1)
+so.set_signal_status(signal(W, "A", "s-c", "refused"), "denied")
+signal(W, "team", "s-a", "[SUB-AGENT DONE]")
+signal(W, "", "s-b", "from the dashboard")
+signal(W, "A", "s-s", "to my sub-agent")
+signal(W2, "X", "s-x")
 
 
 async def main():
@@ -103,7 +118,7 @@ async def main():
           all(set(n) == {"id", "kind", "label", "detail"} for n in g["nodes"]), g["nodes"])
     check("node ids are unique", len(nodes) == len(g["nodes"]), g["nodes"])
     agents = {n["label"] for n in g["nodes"] if n["kind"] == "agent"}
-    check("agents are exactly A, B, C (no sub-agent S, no W2 agent)", agents == {"A", "B", "C"}, agents)
+    check("agents are exactly A, B, C, R (no sub-agent S, no W2 agent)", agents == {"A", "B", "C", "R"}, agents)
     check("memories are exactly m1, m2, m3 of W",
           {i for i, n in nodes.items() if n["kind"] == "memory"} == {m1, m2, m3}, sorted(nodes))
     decs = [n for n in g["nodes"] if n["kind"] == "decision"]
@@ -118,9 +133,20 @@ async def main():
     want = sorted([("owns", f"agent:s-{a}", m, 1) for a in "ab" for m in (m1, m2, m3)]
                   + [("links", m1, m2, 1),
                      ("recorded", "agent:s-a", decs[0]["id"] if decs else "?", 1),
-                     ("signals", "agent:s-a", "agent:s-b", 2)])
-    check("links are exactly owns ×6, m1→m2, A→decision, A→B signals ×2", links == want,
-          f"\n  got  {links}\n  want {want}")
+                     ("asks", "agent:s-a", "agent:s-b", 2),
+                     ("tells", "agent:s-b", "agent:s-a", 1),
+                     ("asks", "agent:s-r", "agent:s-c", 4)])
+    check("links are exactly owns ×6, m1→m2, A→decision, A asks B ×2, B tells A ×1, renamed R asks C ×4",
+          links == want, f"\n  got  {links}\n  want {want}")
+    sig = {(lk["source"], lk["target"], lk["kind"]): lk for lk in g["links"] if lk["kind"] in ("asks", "tells")}
+    check("every signal link has 1-3 recent single-line messages of ≤100 chars",
+          all(0 < len(lk["recent"]) <= 3 and all(len(m) <= 100 and "\n" not in m for m in lk["recent"])
+              for lk in sig.values()), sig)
+    ab = sig.get(("agent:s-a", "agent:s-b", "asks"), {}).get("recent")
+    check("recent is newest first, squashed to one line",
+          ab == [("line one line two " + "x" * 200)[:100], "first ask"], ab)
+    rc = sig.get(("agent:s-r", "agent:s-c", "asks"), {}).get("recent")
+    check("recent keeps only the newest 3", rc == ["ask 2", "ask 1", "ask 0"], rc)
     check("every link end is a node", all(lk["source"] in nodes and lk["target"] in nodes for lk in g["links"]))
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
