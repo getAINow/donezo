@@ -19,7 +19,6 @@ Agent:  claude mcp add --transport http signal http://localhost:8993/mcp
 
 import json
 import os
-import re
 from contextlib import asynccontextmanager
 
 import httpx
@@ -253,30 +252,6 @@ async def list_agents(from_role: str):
     return json.dumps(agents, ensure_ascii=False)
 
 
-def _memory_entries(orch, ws):
-    """(owners, path, name, description, body) for every memory file of the sessions in `ws`."""
-    owners = {}
-    for s in orch.list_sessions():
-        if s.get("workspace_id") == ws and s.get("cwd"):
-            folder = orch.CLAUDE_PROJECTS_DIR / re.sub(r"[^A-Za-z0-9]", "-", s["cwd"]) / "memory"
-            owners.setdefault(folder, []).append(s["name"])
-    for folder, names in owners.items():
-        if not folder.is_dir():
-            continue
-        for f in sorted(folder.glob("*.md")):
-            if f.name == "MEMORY.md" or f.is_symlink() or not f.is_file():
-                continue
-            text = f.read_text(encoding="utf-8", errors="replace")
-            meta, body = {}, text
-            parts = text.split("---", 2)
-            if text.startswith("---") and len(parts) == 3:
-                body = parts[2]
-                for line in parts[1].splitlines():
-                    k, _, v = line.partition(":")
-                    meta.setdefault(k.strip(), v.strip())
-            yield sorted(set(names)), f, meta.get("name", f.stem), meta.get("description", ""), body
-
-
 def _hits(text, words):
     low = text.lower()
     return sum(low.count(w) for w in words) if all(w in low for w in words) else 0
@@ -306,7 +281,7 @@ async def search_knowledge(from_role: str, query: str):
     if not words:
         return "⛔ query is required."
     found = []
-    for owners, path, name, desc, body in _memory_entries(orch, ws):
+    for owners, path, name, desc, body in team.memory_entries(ws):
         text = " ".join(f"{name}\n{desc}\n{body}".split())
         n = _hits(text, words)
         if n:

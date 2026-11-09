@@ -31,6 +31,7 @@ import asyncio
 import difflib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -885,6 +886,67 @@ def record_decision(session_name, decision, reason="", evidence="", workspace_id
     return "Decision recorded."
 
 
+def memory_entries(ws, sessions=None):
+    """(owners, path, name, description, body) for every memory file of the sessions in `ws`."""
+    so = _so()
+    owners = {}
+    for s in sessions if sessions is not None else so.list_sessions():
+        if s.get("workspace_id") == ws and s.get("cwd"):
+            folder = so.CLAUDE_PROJECTS_DIR / re.sub(r"[^A-Za-z0-9]", "-", s["cwd"]) / "memory"
+            owners.setdefault(folder, []).append(s["name"])
+    for folder, names in owners.items():
+        if not folder.is_dir():
+            continue
+        for f in sorted(folder.glob("*.md")):
+            if f.name == "MEMORY.md" or f.is_symlink() or not f.is_file():
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace")
+            meta, body = {}, text
+            parts = text.split("---", 2)
+            if text.startswith("---") and len(parts) == 3:
+                body = parts[2]
+                for line in parts[1].splitlines():
+                    k, _, v = line.partition(":")
+                    meta.setdefault(k.strip(), v.strip())
+            yield sorted(set(names)), f, meta.get("name", f.stem), meta.get("description", ""), body
+
+
+def knowledge_graph(workspace_id):
+    """Read-only graph for the Knowledge tab: top-level agents, their memories and decisions."""
+    so = _so()
+    agents = [s for s in so.list_sessions() if s.get("workspace_id") == workspace_id and not s.get("team_role")]
+    aid = {s["id"]: "agent:" + s["id"] for s in agents}
+    by_name = {s["name"]: aid[s["id"]] for s in agents}
+    nodes = [{"id": aid[s["id"]], "kind": "agent", "label": s["name"], "detail": (s.get("cwd") or "")[:200]}
+             for s in agents]
+    links = []
+    mems = [(owners, "memory:" + str(path), name, desc, body)
+            for owners, path, name, desc, body in memory_entries(workspace_id, agents)]
+    named = {}
+    for owners, mid, name, desc, _ in mems:
+        named.setdefault(name, []).append(mid)
+        nodes.append({"id": mid, "kind": "memory", "label": name, "detail": desc[:200]})
+        links += [{"source": by_name[o], "target": mid, "kind": "owns", "count": 1} for o in owners]
+    for _, mid, _, _, body in mems:
+        targets = {t for n in re.findall(r"\[\[([^\]]+)\]\]", body) for t in named.get(n.strip(), ()) if t != mid}
+        links += [{"source": mid, "target": t, "kind": "links", "count": 1} for t in sorted(targets)]
+    # shortcut: newest 200 decisions only, so the force layout stays smooth; page it if the cap bites.
+    for d in reversed(_rows("SELECT d.id, d.session_id, d.decision, d.reason, s.parent_id FROM team_decisions d "
+                            "LEFT JOIN sessions s ON s.id = d.session_id WHERE d.workspace_id = ? "
+                            "ORDER BY d.id DESC LIMIT 200", (workspace_id,))):
+        # A sub-agent's decision belongs to the director that delegated it.
+        owner = aid.get(d["session_id"]) or aid.get(d["parent_id"] or "")
+        if owner:
+            did = f"decision:{d['id']}"
+            nodes.append({"id": did, "kind": "decision", "label": d["decision"][:120], "detail": d["reason"][:200]})
+            links.append({"source": owner, "target": did, "kind": "recorded", "count": 1})
+    for r in _rows("SELECT from_session f, to_session t, COUNT(*) n FROM signals WHERE workspace_id = ? "
+                   "GROUP BY from_session, to_session", (workspace_id,)):
+        if r["f"] in aid and r["t"] in aid and r["f"] != r["t"]:
+            links.append({"source": aid[r["f"]], "target": aid[r["t"]], "kind": "signals", "count": r["n"]})
+    return {"nodes": nodes, "links": links}
+
+
 def list_for_director(director_id):
     out = []
     for st in _rows("SELECT * FROM subtasks WHERE director_id = ? AND kind != 'reflect' "
@@ -1460,6 +1522,9 @@ def routes():
         return JSONResponse(await asyncio.to_thread(overview, ws_of(request),
                                                  parse_page(request.query_params)))
 
+    async def api_knowledge(request: Request):
+        return JSONResponse(await asyncio.to_thread(knowledge_graph, ws_of(request)))
+
     async def api_director(request: Request):
         return reply(await asyncio.to_thread(director_view, request.path_params["sid"]))
 
@@ -1512,6 +1577,7 @@ def routes():
 
     return [
         Route("/api/team", api_team),
+        Route("/api/knowledge", api_knowledge),
         Route("/api/team/director/{sid}", api_director),
         Route("/api/team/spawn", api_spawn, methods=["POST"]),
         Route("/api/team/subtasks/{st}/cancel", api_cancel, methods=["POST"]),

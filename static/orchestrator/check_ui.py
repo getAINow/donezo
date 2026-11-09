@@ -379,6 +379,22 @@ if "renderPlan(health.plan_usage)" not in JS:
 check("the context meter and plan usage update live", gaps,
       "the meter freezes, or every API call of a background run rebuilds the canvas")
 
+# 22 · Tab Knowledge: chỉ đọc. Mất một mảnh dây là bấm tab không có gì; một api(..., "POST") lọt vào
+# là cái tab "chỉ để xem" bắt đầu đổi dữ liệu.
+gaps = set()
+if 'id="tab-btn-knowledge"' not in HTML or 'id="tab-knowledge" hidden' not in HTML or 'id="kg-svg"' not in HTML:
+    gaps.add("index.html needs #tab-btn-knowledge, a hidden #tab-knowledge and #kg-svg")
+if not re.search(r'const TABS = \[[^\]]*"knowledge"', JS):
+    gaps.add("TABS must list knowledge")
+tabs = JS[JS.index("function switchTab("):JS.index("window.switchTab = switchTab")]
+if '$("tab-knowledge").hidden = name !== "knowledge"' not in tabs or 'name === "knowledge") kgLoad()' not in tabs:
+    gaps.add("switchTab must show #tab-knowledge and load it")
+kgjs = JS[JS.index("const KG_R"):JS.index('window.addEventListener("resize", () => {\n  if (!kg')]
+if re.search(r'api\([^)]*,\s*"(POST|PUT|DELETE|PATCH)"|\bact\(|method:', kgjs):
+    gaps.add("the Knowledge code must only GET")
+check("the Knowledge tab is wired and read-only", gaps,
+      "the tab button does nothing, or the read-only graph writes data")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)
