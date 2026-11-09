@@ -43,6 +43,8 @@ send progress pings.
 - `list_agents(from_role="<ROLE_NAME>")` — who is live right now. The roster changes
   as agents are spawned and removed, so call this instead of trusting a role name
   you remember from an earlier turn.
+- `search_knowledge(from_role="<ROLE_NAME>", query="...")` — when you need information from
+  another role, search first and `send_signal` only if nothing relevant comes back.
 - `send_signal(to_role="<target>", from_role="<ROLE_NAME>", message="...")` — hand
   work over. The other agent cannot see your conversation and cannot see signals you
   sent to anyone else, so the message must carry its own context: the goal, the

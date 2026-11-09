@@ -18,6 +18,7 @@ Agent:  claude mcp add --transport http signal http://localhost:8993/mcp
 """
 
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -152,6 +153,7 @@ async def send_signal(to_role: str, message: str, from_role: str = "", requires_
 
     Dùng khi agent hiện tại cần bàn giao/thông báo cho agent khác (vd Artist Director
     → Developer để code, Developer → Artist Director để review).
+    Cần thông tin từ vai khác thì gọi search_knowledge trước, chỉ send_signal khi không thấy gì liên quan.
 
     Args:
         to_role: Role/tên agent đích (vd "backend", "reviewer"). Phải khớp name đã register
@@ -289,18 +291,22 @@ async def search_knowledge(from_role: str, query: str):
             start = max(0, at - 100)
             snippet = ("…" if start else "") + text[start:start + 300]
             found.append((n, f"[memory] owner: {', '.join(owners)} | {path}\n  {name}: {desc[:200]}\n"
-                             f"  {snippet}"))
+                             f"  {snippet}", f"memory:{path}"))
     for d in team._rows("SELECT d.*, s.name AS owner FROM team_decisions d LEFT JOIN sessions s "
                         "ON s.id = d.session_id WHERE d.workspace_id = ?", (ws,)):
         n = _hits(f"{d['decision']}\n{d['reason']}\n{d['evidence']}", words)
         if n:
             found.append((n, f"[decision] owner: {d['owner'] or d['session_id']} | {d['ts'][:10]}\n"
-                             f"  {d['decision'][:200]}\n  reason: {d['reason'][:200]}"))
+                             f"  {d['decision'][:200]}\n  reason: {d['reason'][:200]}", f"decision:{d['id']}"))
+    found.sort(key=lambda x: -x[0])
+    try:
+        team.log_lookup(ws, from_role, query, [ref for _, _, ref in found[:10]])
+    except Exception as e:  # noqa: BLE001 — the log only feeds the graph; the search must still answer
+        logging.getLogger(__name__).warning("knowledge lookup log failed: %s", e)
     if not found:
         return (f"No memory or decision in your workspace matches '{query}'. Ask an agent directly: "
                 f"list_agents, then send_signal.")
-    found.sort(key=lambda x: -x[0])
-    return "\n".join(r for _, r in found[:10])
+    return "\n".join(r for _, r, _ in found[:10])
 
 
 # ─── Đội sub-agent (director) — xem team.py ─────────────────────────────────

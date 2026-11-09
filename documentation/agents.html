@@ -256,12 +256,15 @@ name. The default is <code>high</code>. You can change both later in the agent's
 </ul>
 <p>Before asking, an agent can look up what its colleagues already know with <code>search_knowledge</code>. It
 searches the memory files and recorded decisions of the agents in the same workspace and names who wrote each
-result. It only reads, and never looks in other workspaces.</p>
+result. It only reads, and never looks in other workspaces. Each search (the words asked and which items came
+back) is logged in the local database so the Knowledge tab can draw it.</p>
 <p>To see that knowledge at a glance, open the <span class="ui">Knowledge</span> tab. It draws the workspace's
 agents, their memory files and their recorded decisions as a graph. Lines show who owns what, which memories
 link to each other. Arrows between agents show who asked whom for something (solid, expects a reply) and who
-reported to or answered whom (dashed); thicker means more messages. Hover an arrow for its latest messages, hover a
-node for its details, and drag it around; the tab never changes anything.</p>
+reported to or answered whom (dashed); thicker means more messages. Thin dotted "looked up" lines run from an agent
+to the memories and decisions its searches found. Hover an arrow or line for its latest messages or searches, hover a
+node for its details (an agent also lists its recent searches that found nothing), and drag it around; the tab
+never changes anything.</p>
 <p>You can message an agent too: use the box in its panel, or <span class="ui">Send a message</span> in
 <a href="control.html#activity">Activity</a>.</p>
 

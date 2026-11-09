@@ -392,6 +392,9 @@ if '$("tab-knowledge").hidden = name !== "knowledge"' not in tabs or 'name === "
 kgjs = JS[JS.index("const KG_R"):JS.index('window.addEventListener("resize", () => {\n  if (!kg')]
 if re.search(r'api\([^)]*,\s*"(POST|PUT|DELETE|PATCH)"|\bact\(|method:', kgjs):
     gaps.add("the Knowledge code must only GET")
+if ('kg-looked_up' not in kgjs or 'id="kg-arrow-looked_up"' not in HTML or '.kg-l.kg-looked_up' not in HTML
+        or '>Looked up</span>' not in HTML or "Searched, found nothing:" not in kgjs):
+    gaps.add("looked_up links need their own class, arrow, legend entry and the agent's gaps on hover")
 check("the Knowledge tab is wired and read-only", gaps,
       "the tab button does nothing, or the read-only graph writes data")
 

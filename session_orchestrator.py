@@ -2890,7 +2890,9 @@ def _write_role_skill(cwd, name, content):
 # không cần đồng bộ chéo giữa các agent.
 _PEER_RULE = ('[Peers] Cần gửi signal cho một vai mà bạn chưa chắc có thật? Gọi '
               'list_agents(from_role="<vai của bạn>") để lấy danh sách agent đang sống trong '
-              'workspace. ĐỪNG nhớ tên vai từ lượt trước — danh sách trong đầu bạn là bản cũ.')
+              'workspace. ĐỪNG nhớ tên vai từ lượt trước — danh sách trong đầu bạn là bản cũ. '
+              'Cần thông tin từ vai khác thì gọi search_knowledge(from_role="<vai của bạn>", query="...") '
+              'TRƯỚC, chỉ send_signal khi không thấy gì liên quan.')
 
 # Gửi signal giữa lượt là tự mở cửa cho một run thứ hai vào CÙNG session mình: vai kia làm xong
 # sớm, báo cáo về lúc mình còn đang chạy, và hai tiến trình cùng ghi một transcript. Lock

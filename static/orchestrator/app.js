@@ -3839,7 +3839,7 @@ window.switchTab = switchTab;
 // ── Knowledge: đồ thị CHỈ ĐỌC (agent, memory, decision). Chỉ GET; kéo node là tương tác duy nhất.
 // Force layout tự viết: link kéo, node đẩy nhau, kéo nhẹ về tâm. alpha nguội dần rồi dừng rAF.
 const KG_R = { agent: 15, memory: 7, decision: 6 };
-const KG_LEN = { owns: 70, recorded: 45, links: 60, asks: 160, tells: 160 };
+const KG_LEN = { owns: 70, recorded: 45, links: 60, asks: 160, tells: 160, looked_up: 120 };
 const KG_SAY = { asks: "asked", tells: "reported to" };
 let kg = null, kgRaf = 0, kgSeq = 0;
 
@@ -3869,9 +3869,13 @@ function kgRender(g) {
     ? `<path class="kg-l kg-${l.kind}" marker-end="url(#kg-arrow-${l.kind})" style="stroke-width:${
       Math.min(8, 1.5 + 1.5 * Math.log2(l.count))}px"><title>${esc(l.s.label)} ${KG_SAY[l.kind]} ${esc(l.t.label)} · ${
       l.count}${(l.recent || []).map((m) => "\n" + esc(m)).join("")}</title></path>`
+    : l.kind === "looked_up"
+    ? `<line class="kg-l kg-looked_up" marker-end="url(#kg-arrow-looked_up)"><title>${esc(l.s.label)} looked up ${
+      esc(l.t.label)} · ${l.count}${(l.recent || []).map((q) => "\n" + esc(q)).join("")}</title></line>`
     : `<line class="kg-l kg-${esc(l.kind)}"><title>${esc(l.s.label)} → ${esc(l.t.label)} · ${esc(l.kind)}</title></line>`).join("")
     }</g><g>${nodes.map((n, i) => `<g class="kg-n" data-i="${i}">${shape(n)}<title>${esc(n.label)}${
-      n.detail ? "\n" + esc(n.detail) : ""}</title>${n.kind === "agent"
+      n.detail ? "\n" + esc(n.detail) : ""}${(n.gaps || []).length
+      ? "\nSearched, found nothing:" + n.gaps.map((q) => "\n" + esc(q)).join("") : ""}</title>${n.kind === "agent"
       ? `<text text-anchor="middle" y="${n.r + 14}">${esc(n.label)}</text>` : ""}</g>`).join("")}</g>`;
   const [lg, ng] = svg.children;
   links.forEach((l, i) => { l.el = lg.children[i]; });
@@ -3929,7 +3933,9 @@ function kgDraw() {
     const { s, t } = l;
     if (!KG_SAY[l.kind]) {
       l.el.setAttribute("x1", s.x.toFixed(1)); l.el.setAttribute("y1", s.y.toFixed(1));
-      l.el.setAttribute("x2", t.x.toFixed(1)); l.el.setAttribute("y2", t.y.toFixed(1));
+      // looked_up has an arrowhead: stop it at the item's edge.
+      const pad = l.kind === "looked_up" ? (t.r + 2) / (Math.hypot(t.x - s.x, t.y - s.y) || 1) : 0;
+      l.el.setAttribute("x2", (t.x - (t.x - s.x) * pad).toFixed(1)); l.el.setAttribute("y2", (t.y - (t.y - s.y) * pad).toFixed(1));
       continue;
     }
     // Bend to the left of travel, so A→B and B→A take opposite sides; ends stop at the circles.

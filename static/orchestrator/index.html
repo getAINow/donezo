@@ -617,6 +617,8 @@
   .kg-l.kg-tells { stroke: var(--accent); stroke-opacity: .45; stroke-dasharray: 6 4; }
   #kg-arrow-asks path { fill: var(--accent); }
   #kg-arrow-tells path { fill: var(--accent); fill-opacity: .6; }
+  .kg-l.kg-looked_up { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 1 3; stroke-linecap: round; }
+  #kg-arrow-looked_up path { fill: var(--muted); }
   .kg-n { cursor: grab; }
   .kg-n:active { cursor: grabbing; }
   .kg-agent { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
@@ -1558,10 +1560,13 @@
             markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5 0 10Z"/></marker>
           <marker id="kg-arrow-tells" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9"
             markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5 0 10Z"/></marker>
+          <marker id="kg-arrow-looked_up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+            markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5 0 10Z"/></marker>
         </defs></svg>
         <span><svg width="26" height="14"><path class="kg-l kg-asks" d="M1 7H24" marker-end="url(#kg-arrow-asks)" style="stroke-width:2px"/></svg>Asked (expects a reply)</span>
         <span><svg width="26" height="14"><path class="kg-l kg-tells" d="M1 7H24" marker-end="url(#kg-arrow-tells)" style="stroke-width:2px"/></svg>Reported / answered</span>
         <span><svg width="22" height="14"><line class="kg-l kg-links" x1="1" y1="7" x2="21" y2="7"/></svg>[[link]]</span>
+        <span><svg width="26" height="14"><line class="kg-l kg-looked_up" x1="1" y1="7" x2="22" y2="7" marker-end="url(#kg-arrow-looked_up)"/></svg>Looked up</span>
       </div>
       <div id="kg-empty" class="cv-empty" hidden>No shared knowledge in this workspace yet: no memories, decisions or signals.</div>
     </div>
