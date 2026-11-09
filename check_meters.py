@@ -67,6 +67,11 @@ WS = so.DEFAULT_WORKSPACE
 so.register_session("card-a", "alpha", cwd=str(TMP), model="", workspace_id=WS)
 so.register_session("card-b", "beta", cwd=str(TMP), model="", workspace_id=WS)
 so.register_session("card-g", "gamma", cwd=str(TMP), model="agy-default", workspace_id=WS)
+so.register_session("card-o", "opus", cwd=str(TMP), model="claude-opus-5-5", effort="high", workspace_id=WS)
+so.register_session("card-u", "odd", cwd=str(TMP), model="claude-opus-5-5", effort="turbo", workspace_id=WS)
+so.register_session("card-n", "nomodel", cwd=str(TMP), model="", effort="high", workspace_id=WS)
+so.register_session("card-y", "agy", cwd=str(TMP), model="agy:gemini-3.1-pro-high", effort="high",
+                    workspace_id=WS)
 so.set_session_resume("card-b", "transcript-b")       # beta's terminal runs a pinned transcript
 
 PAYLOAD = {"session_id": "card-a",
@@ -88,8 +93,32 @@ curl = shutil.which("curl")
 check("the file's statusLine is the bare curl PUT to this server",
       cmd == f"{Path(curl).as_posix()} -s -m 2 -T - http://127.0.0.1:{PORT}/api/meters"
       and not any(c in cmd for c in "\"'@|"), cmd)
-check("the rest of the claude argv is untouched",
-      argv[:1] + argv[3:] == so.terminal_argv(so.get_session("card-a"), "claude"), argv)
+check("the rest of the claude argv is terminal_argv plus the card's effort",
+      argv[3:5] == ["--effort", so.DEFAULT_EFFORT]
+      and argv[:1] + argv[5:] == so.terminal_argv(so.get_session("card-a"), "claude"), argv)
+
+
+def term(sid, cli):
+    return so.terminal_launch_argv(so.get_session(sid), cli)
+
+
+# The terminal must run at the card's model/effort like background runs do: a switch between
+# them that changes effort throws away the whole cached conversation.
+a = term("card-o", "claude")
+check("a claude card's terminal gets --settings, its model and effort, then the session flags",
+      a[1:2] == ["--settings"] and a[3:7] == ["--model", "claude-opus-5-5", "--effort", "high"]
+      and a[:1] + a[7:] == so.terminal_argv(so.get_session("card-o"), "claude")
+      and "--session-id" in a, a)
+a = term("card-u", "claude")
+check("an unknown effort gives no --effort (claude would exit)",
+      "--effort" not in a and a[3:5] == ["--model", "claude-opus-5-5"], a)
+a = term("card-n", "claude")
+check("a card with no model gives no --model", "--model" not in a and a[3:5] == ["--effort", "high"], a)
+a = term("card-y", "claude")
+check("an agy card opened with claude gets neither --model nor --effort",
+      "--model" not in a and "--effort" not in a, a)
+check("an agy card on agy is unchanged",
+      term("card-y", "agy") == so.terminal_argv(so.get_session("card-y"), "agy"), term("card-y", "agy"))
 check("the terminal websocket launches through terminal_launch_argv",
       "lambda s: terminal_launch_argv(s, websocket.query_params" in (HERE / "session_orchestrator.py")
       .read_text(encoding="utf-8"))
@@ -175,8 +204,11 @@ finally:
 
 # ── (c) background run: usage of the latest assistant event, cost from result ──
 FAKE = TMP / "fake_claude.py"
-FAKE.write_text("""import json, sys
+ARGV = TMP / "fake_argv.json"
+FAKE.write_text(f"""import json, sys
+open({str(ARGV)!r}, "w").write(json.dumps(sys.argv[1:]))
 sys.stdin.read()
+""" + """
 for ev in [
     {"type": "system", "subtype": "init", "model": "fake", "tools": []},
     {"type": "assistant", "message": {"content": [{"type": "text", "text": "one"}],
@@ -207,6 +239,10 @@ async def noop(*_):
 async def background():
     r = await so._run_claude(so.get_session("card-b"), "hello", on_event=noop)
     check("the fake run itself succeeds", r["ok"], r)
+    cmd_b = json.loads(ARGV.read_text())
+    check("a background run with no model: no --model, the default effort",
+          "--model" not in cmd_b and cmd_b[cmd_b.index("--effort"):][:2] == ["--effort", so.DEFAULT_EFFORT],
+          cmd_b)
     m = so.METERS.get("card-b") or {}
     check("a run without a known window shows tokens, never a guessed percent",
           m.get("tokens") == 135000 and m.get("pct") is None and m.get("window") is None, m)
@@ -215,6 +251,15 @@ async def background():
     check("run cost comes from the result event", m.get("cost") == 0.4321 and m.get("cost_src") == "run", m)
     check("the line falls back to tokens", so._meter_line(m, {}) == "ctx 135k · cache 99%",
           so._meter_line(m, {}))
+
+    await so._run_claude(so.get_session("card-o"), "hello", on_event=noop)
+    cmd_o = json.loads(ARGV.read_text())
+    check("a background run keeps --model/--effort right after --permission-mode",
+          cmd_o[-6:] == ["--permission-mode", so.DEFAULT_PERMISSION_MODE, "--model", "claude-opus-5-5",
+                         "--effort", "high"], cmd_o)
+    await so._run_claude(so.get_session("card-u"), "hello", on_event=noop)
+    cmd_u = json.loads(ARGV.read_text())
+    check("a background run with an unknown effort has no --effort", "--effort" not in cmd_u, cmd_u)
 
     so.METERS["card-a"] = {"window": 1000000}             # a terminal already told us the window
     await so._run_claude(so.get_session("card-a"), "hello", on_event=noop)

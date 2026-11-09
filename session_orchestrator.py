@@ -2594,6 +2594,15 @@ async def _editor_exited(sid, pid):
     return True
 
 
+def _claude_model_effort_flags(session):
+    """--model/--effort của card cho claude — MỘT chỗ cho cả chạy nền lẫn terminal: lệch mức effort
+    giữa hai bên là mỗi lần chuyển qua lại mất sạch prompt cache của cả hội thoại."""
+    flags = ["--model", session["model"]] if session.get("model") else []
+    # Mức lạ (DB cũ) → clamp_effort trả '' → bỏ cờ, vì effort sai làm claude thoát ngay mã 1.
+    effort = clamp_effort(session.get("effort") or DEFAULT_EFFORT, CLAUDE_MAX_EFFORT)
+    return flags + ["--effort", effort] if effort else flags
+
+
 async def _run_claude(session, prompt, on_event=None, dry_run=False):
     """Chạy `claude -p --resume <id>` với allowlist. Trả dict kết quả.
 
@@ -2631,12 +2640,7 @@ async def _run_claude(session, prompt, on_event=None, dry_run=False):
     perm_mode = session.get("permission_mode") or DEFAULT_PERMISSION_MODE
     if perm_mode:
         cmd += ["--permission-mode", perm_mode]
-    if session.get("model"):
-        cmd += ["--model", session["model"]]
-    # Mức lạ (DB cũ) → clamp_effort trả '' → bỏ cờ, vì effort sai làm claude thoát ngay mã 1.
-    effort = clamp_effort(session.get("effort") or DEFAULT_EFFORT, CLAUDE_MAX_EFFORT)
-    if effort:
-        cmd += ["--effort", effort]
+    cmd += _claude_model_effort_flags(session)
 
     cwd = session.get("cwd") or None
     proc = await asyncio.create_subprocess_exec(
@@ -3831,10 +3835,14 @@ def _statusline_settings():
 
 
 def terminal_launch_argv(session, cli=""):
-    """Lệnh terminal card THẬT SỰ chạy: terminal_argv + statusline của mình cho claude."""
+    """Lệnh terminal card THẬT SỰ chạy: terminal_argv + statusline của mình + model/effort của card
+    cho claude. Card agy mở bằng claude thì bỏ model/effort: model của nó là id Gemini claude từ chối."""
     argv = terminal_argv(session, cli)
-    f = argv[0] == CLAUDE_BIN and _statusline_settings()
-    return [argv[0], "--settings", str(f), *argv[1:]] if f else argv
+    if argv[0] != CLAUDE_BIN:
+        return argv
+    f = _statusline_settings()
+    own = _claude_model_effort_flags(session) if cli_of_engine(engine_name_of_session(session)) == "claude" else []
+    return [argv[0], *(["--settings", str(f)] if f else []), *own, *argv[1:]]
 
 
 def _card_of_claude_session(csid):
