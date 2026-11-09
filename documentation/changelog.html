@@ -68,6 +68,11 @@
   <div class="release-body">
   <p>Changes since <code>v2026.11.09</code>.</p>
 
+  <h3>Changed</h3>
+  <ul>
+    <li>Claude agents compact their context at about 300k tokens instead of near 1M, so each call re-reads less. Change it with <code>CLAUDE_CODE_AUTO_COMPACT_WINDOW</code>; see <a href="settings.html#env">Settings</a>.</li>
+  </ul>
+
   <h3>Fixed</h3>
   <ul>
     <li>A Claude agent's terminal now runs at the card's model and effort, like its background runs. Switching between the two no longer throws away the prompt cache.</li>
