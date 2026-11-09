@@ -105,6 +105,7 @@ in the project folder, and what you typed in the CLI's own history stay.</p>
     <tr><td><code>ORCH_SUBAGENTS_MAX</code></td><td><code>4</code></td><td>Active sub-agents per director.</td></tr>
     <tr><td><code>ORCH_SUBTASK_MAX_ATTEMPTS</code></td><td><code>3</code></td><td>Failed verifications before a sub-agent's work is marked failed.</td></tr>
     <tr><td><code>ORCH_MAX_CONCURRENT</code></td><td><code>3</code></td><td>Background runs at the same time.</td></tr>
+    <tr><td><code>CLAUDE_CODE_AUTO_COMPACT_WINDOW</code></td><td><code>300000</code></td><td>Claude agents compact their context at about this many tokens. Larger keeps more detail and costs more per call. Donezo leaves it unset if your Claude settings already have <code>autoCompactWindow</code>.</td></tr>
     <tr><td><code>ORCH_DEFAULT_EFFORT</code></td><td><code>high</code></td><td>Effort for agents that do not set one.</td></tr>
     <tr><td><code>ORCH_PAIR_SIGNAL_CAP</code></td><td><code>2</code></td><td>Messages two agents may exchange per task.</td></tr>
     <tr><td><code>ORCH_PAIR_SIGNAL_WINDOW_MIN</code></td><td><code>60</code></td><td>Minutes of silence before that count resets.</td></tr>
