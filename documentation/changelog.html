@@ -70,11 +70,12 @@
 
   <h3>New</h3>
   <ul>
-    <li>A <span class="ui">Knowledge</span> tab draws the agents, their memories and decisions, and who asked or reported to whom, as a graph you can drag around. See <a href="agents.html#handoffs">Agents</a>.</li>
+    <li>A <span class="ui">Knowledge</span> tab draws the agents, their memories and decisions, and who asked or reported to whom, as a graph you can drag around. It also shows what each agent looked up with <code>search_knowledge</code>, and what it searched for and could not find. See <a href="agents.html#handoffs">Agents</a>.</li>
   </ul>
 
   <h3>Changed</h3>
   <ul>
+    <li>Agents are told to try <code>search_knowledge</code> before asking another agent for information.</li>
     <li>Claude agents compact their context at about 300k tokens instead of near 1M, so each call re-reads less. Change it with <code>CLAUDE_CODE_AUTO_COMPACT_WINDOW</code>; see <a href="settings.html#env">Settings</a>.</li>
   </ul>
 
