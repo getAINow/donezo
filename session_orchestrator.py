@@ -128,6 +128,23 @@ def _load_dotenv(path=None):
 
 _load_dotenv()
 
+
+def _user_claude_settings():
+    """settings.json của chính người dùng ({} nếu thiếu/hỏng). CHỈ ĐỌC, không bao giờ ghi."""
+    p = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+# Đo 2026-11-09: phần context trên 300k token ngốn ~10% tổng chi phí (mỗi lượt đọc lại hết).
+# Env default (không phải flag) để mọi tiến trình con kế thừa; .env/env thật hoặc autoCompactWindow
+# trong settings của người dùng vẫn thắng — env var sẽ đè setting đó nên khi có thì không đặt.
+if "autoCompactWindow" not in _user_claude_settings():
+    os.environ.setdefault("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "300000")
+
 DB_DIR = Path.home() / ".session_orch_db"
 DB_NAME = os.environ.get("ORCH_DB", "orchestrator")
 # Multi-tenant: mỗi workspace là 1 thư mục riêng dưới root này; cwd của mọi session
@@ -3810,11 +3827,7 @@ def _statusline_command():
 
 def _user_has_statusline():
     """settings.json của chính người dùng đã có statusLine → để yên của họ. CHỈ ĐỌC, không ghi."""
-    p = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
-    try:
-        return "statusLine" in json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return False
+    return "statusLine" in _user_claude_settings()
 
 
 def _statusline_settings():
