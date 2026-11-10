@@ -405,10 +405,10 @@ async def main():
     await until(lambda: events(session="sw-seven", ev="ready"))
     await t.type("draft")
     s7b = send("sw-seven", "case seven queued")
-    def term_queue():
-        return next((s.get("term_queue") for s in httpx.get(BASE + "/api/sessions").json() if s["id"] == "sw-seven"), None)
-    await until(lambda: term_queue() == 1, 10)
-    case(7, "the card reports 1 message waiting for the open terminal", term_queue() == 1, term_queue())
+    await asyncio.sleep(2.5)                        # past a poll + TYPING_QUIET: proves it is STILL waiting
+    queued = {s["id"]: s.get("term_queue") for s in httpx.get(BASE + "/api/sessions").json()}
+    case(7, "the card reports 1 message waiting for the open terminal", queued.get("sw-seven") == 1,
+         queued.get("sw-seven"))
     await t.close()
     await until(lambda: finished(s7b))
     runs = events(session="sw-seven", who="run", ev="start")
