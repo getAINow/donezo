@@ -9,6 +9,7 @@ Like team.py, this module never imports session_orchestrator at module level.
 """
 
 import secrets
+import shutil
 import uuid
 from datetime import datetime, timedelta
 
@@ -230,6 +231,28 @@ def start_scout(director_id):
     return {"id": st_id, "status": "running"}
 
 
+def sweep_folders():
+    """Remove run folders under DB_DIR/scout of every scout not in team.ACTIVE: ended runs, and
+    leftovers of a crash. Direct children only; a symlink is unlinked, never followed. A failed
+    remove (a Windows file lock) is logged and retried by the next sweep."""
+    root = team._so().DB_DIR / "scout"
+    if not root.is_dir():
+        return
+    live = {r["id"] for r in team._rows(
+        f"SELECT id FROM subtasks WHERE kind = ? AND status IN ({','.join('?' * len(team.ACTIVE))})",
+        (ROLE, *team.ACTIVE))}
+    for child in root.iterdir():
+        if child.name in live:
+            continue
+        try:
+            if child.is_symlink() or not child.is_dir():
+                child.unlink()
+            else:
+                shutil.rmtree(child)
+        except OSError as e:
+            print(f"[planner] could not remove {child}: {e!r}", flush=True)
+
+
 def after_run(st, report):
     """team._after_work, for a run that ended well: passed, with however many proposals (0 is fine)."""
     done = team._update(st["id"], _from=("running",), status="passed", report=report, run_key="",
@@ -273,6 +296,10 @@ def run_due():
     Called at startup and on run_loop's sweep tick. Returns the started subtask ids."""
     so = team._so()
     started = []
+    try:
+        sweep_folders()
+    except Exception as e:  # noqa: BLE001 — a cleanup must not stop the schedule
+        print(f"[planner] sweep: {e!r}", flush=True)
     for p in team._rows("SELECT * FROM planners WHERE enabled = 1 AND next_run_at != '' "
                         "AND next_run_at <= ?", (so._now(),)):
         s = so.get_session(p["owner_id"])

@@ -535,8 +535,64 @@ async def case_j():
               and not asks("sub-x") and not asks(scout_sid), f"{errs} {on}")
 
 
+async def case_k():
+    root = so.DB_DIR / "scout"
+    assert TMP.resolve() in root.resolve().parents, root      # nothing below is deleted outside TMP
+    team._exec("UPDATE subtasks SET status = 'passed' WHERE kind = 'scout' AND status IN "
+               f"({','.join('?' * len(team.ACTIVE))})", team.ACTIVE)
+    team._exec("UPDATE planners SET next_run_at = ?", ((datetime.now() + timedelta(days=9)).isoformat(),))
+    SCOUT.update(do=[], crash=False)
+
+    def start():
+        r = planner.start_scout("dir-1")
+        return r.get("id", ""), root / r.get("id", "?")
+    a, fa = start()
+    check("k1) while a scout runs its folder exists", a and fa.is_dir(), str(fa))
+    await drain()
+    check("k1) after the run ends well its folder is gone",
+          team.get_subtask(a)["status"] == "passed" and not fa.exists(), team.get_subtask(a)["status"])
+    SCOUT["crash"] = True
+    b, fb = start()
+    await drain()
+    SCOUT["crash"] = False
+    check("k2) after a failed run its folder is gone",
+          team.get_subtask(b)["status"] == "failed" and not fb.exists(), team.get_subtask(b)["status"])
+    c, fc = start()
+    team.cancel(c, by_user=True)
+    check("k3) after a cancelled run its folder is gone",
+          team.get_subtask(c)["status"] == "cancelled" and fc.is_dir() is False)
+    await drain()
+    # Leftovers: a crash's folder, a symlink out of scout/, while another scout is running.
+    d, fd = start()
+    dead = root / "st_deadbeef"
+    dead.mkdir()
+    (dead / "x.txt").write_text("x")
+    outside = TMP / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    link = root / "st_link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:                     # Windows without symlink rights
+        link = None
+    other = so.DB_DIR / "unrelated.txt"
+    other.write_text("u")
+    for p in (dead, fd, *([link] if link else [])):
+        assert TMP.resolve() in p.parent.resolve().parents and p.parent == root, p
+    planner.run_due()
+    check("k4) a leftover folder of no active subtask is gone after run_due", not dead.exists())
+    check("k4) the folder of the scout running at that moment still exists", fd.is_dir(), str(fd))
+    if link:
+        check("k5) a symlink in scout/ is removed, not followed",
+              not link.is_symlink() and not link.exists() and (outside / "keep.txt").read_text() == "keep")
+    check("k6) DB_DIR and unrelated files in it are untouched",
+          so.DB_DIR.is_dir() and other.read_text() == "u" and root.is_dir())
+    team.cancel(d)
+    await drain()
+
+
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j):
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_k):
         await case()
 
 
