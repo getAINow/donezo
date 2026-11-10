@@ -4685,6 +4685,7 @@ async function boardLoad() {
   const r = bdOwner ? await api("/api/board" + bdQ({ owner_id: bdOwner })) : { cards: [], open: {} };
   if (my !== bdSeq) return;
   BOARD = { agents, cards: r.cards, open: r.open };
+  plannerLoad().catch((e) => console.error(e));
   if (!bdEdit) boardRender();          // đang sửa một card: refresh không được xoá chữ đang gõ
 }
 
@@ -4770,6 +4771,69 @@ function boardDelete(id) {
 window.boardAdd = boardAdd; window.boardPick = boardPick; window.boardFold = boardFold;
 window.boardMove = boardMove; window.boardEditOpen = boardEditOpen; window.boardSave = boardSave;
 window.boardDelete = boardDelete;
+
+// ── Planner of the picked agent (planner.py): a scout that files proposals on this board ──────
+// Fields reload only when the agent changes or nothing is being typed (plDirty): the SSE refresh
+// reloads the board while the user writes the brief.
+let plOwner = "", plSeq = 0, plDirty = false;
+const plDay = (iso) => (iso || "").slice(0, 16).replace("T", " ");
+
+async function plannerLoad() {
+  const owner = bdOwner, my = ++plSeq;
+  $("bd-planner").hidden = !owner;
+  if (!owner) return;
+  const r = await api("/api/planner" + bdQ({ owner_id: owner }));
+  if (my !== plSeq) return;
+  if (owner !== plOwner) { plDirty = false; $("pl-msg").textContent = ""; }
+  plOwner = owner;
+  plannerRender(r);
+}
+
+function plannerRender({ settings: s, last, running, now }) {
+  if (!plDirty) {
+    $("pl-on").checked = !!s.enabled;
+    $("pl-brief").value = s.brief;
+    $("pl-every").value = s.every_days;
+  }
+  $("pl-state").textContent = s.enabled ? "On" : "Off";
+  const days = s.next_run_at ? Math.round((Date.parse(s.next_run_at) - Date.parse(now)) / 864e5) : 0;
+  $("pl-next").textContent = s.enabled && s.next_run_at
+    ? `Next run ${plDay(s.next_run_at)} (in ${days} day${days === 1 ? "" : "s"})` : "";
+  $("pl-scout").disabled = running;
+  $("pl-scout").textContent = running ? "Scouting…" : "Scout now";
+  $("pl-last").textContent = !last ? "No run yet."
+    : `Last run ${plDay(last.created_at)} · ${last.status} · ${last.proposals} proposal${last.proposals === 1 ? "" : "s"}`
+      + (last.tokens ? ` · ${last.tokens} tokens` : "") + (last.status === "failed" && last.reason ? ` · ${last.reason}` : "");
+}
+
+async function plannerSave(e) {
+  if (e) e.preventDefault();
+  const body = { owner_id: plOwner, enabled: $("pl-on").checked, brief: $("pl-brief").value.trim(),
+    every_days: $("pl-every").value };
+  try {
+    plannerRender(await api("/api/planner" + bdQ({}), "POST", body));
+    plDirty = false;
+    showMsg("pl-msg", body.enabled ? "Saved. The planner is on." : "Saved.", true);
+  } catch (err) {
+    let m = String(err);
+    try { m = JSON.parse(m).error || m; } catch { /* text */ }
+    if (body.enabled && !e) $("pl-on").checked = false;     // the switch did not take
+    showMsg("pl-msg", m, false);
+  }
+}
+
+async function plannerScout() {
+  $("pl-scout").disabled = true;
+  try { await api("/api/planner/scout" + bdQ({}), "POST", { owner_id: plOwner }); $("pl-msg").textContent = ""; }
+  catch (err) {
+    let m = String(err);
+    try { m = JSON.parse(m).error || m; } catch { /* text */ }
+    showMsg("pl-msg", m, false);
+  }
+  await plannerLoad().catch(() => {});
+}
+function plannerTyped() { plDirty = true; }
+window.plannerSave = plannerSave; window.plannerScout = plannerScout; window.plannerTyped = plannerTyped;
 
 // ── Live updates (SSE) ───────────────────────────────────────────────────────
 

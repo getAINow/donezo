@@ -7,7 +7,7 @@ Like team.py, this module never imports session_orchestrator at module level.
 
 import team
 
-STATUSES = ("todo", "in_progress", "done", "dropped")
+STATUSES = ("proposed", "todo", "in_progress", "done", "dropped")
 FINAL = ("done", "dropped")      # set by hand, these win over any later automatic change
 NOTE_MAX = 200
 
@@ -32,6 +32,10 @@ def migrate(conn):
         CREATE INDEX IF NOT EXISTS idx_board_cards_owner ON board_cards(workspace_id, owner_id);
         CREATE INDEX IF NOT EXISTS idx_board_cards_task ON board_cards(subtask_id);
     """)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(board_cards)")}
+    for col in ("url", "decision", "decision_reason"):    # planner proposals
+        if col not in cols:
+            conn.execute(f"ALTER TABLE board_cards ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
 
 def _publish(card):
@@ -77,6 +81,20 @@ def add(ws, owner_id, title, body="", source="user"):
                      "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                      (ws, owner_id, title[:200], str(body or ""), source, now, now))
     card = get(ws, cid)
+    _publish(card)
+    return card
+
+
+def propose(ws, owner_id, title, body="", url=""):
+    """A planner's idea: a card in 'proposed' that waits for the user's decision."""
+    url = str(url or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        return {"error": "url must start with http:// or https://"}
+    card = add(ws, owner_id, title, body, source="planner")
+    if card.get("error"):
+        return card
+    team._exec("UPDATE board_cards SET status = 'proposed', url = ? WHERE id = ?", (url[:500], card["id"]))
+    card = get(ws, card["id"])
     _publish(card)
     return card
 
