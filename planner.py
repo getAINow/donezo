@@ -33,9 +33,12 @@ def migrate(conn):
             brief TEXT NOT NULL DEFAULT '',          -- the product brief: all the run sees of the product
             every_days INTEGER NOT NULL DEFAULT 7,
             next_run_at TEXT NOT NULL DEFAULT '',    -- '' while switched off
-            updated_at TEXT NOT NULL DEFAULT ''
+            updated_at TEXT NOT NULL DEFAULT '',
+            waiting TEXT NOT NULL DEFAULT ''         -- agent asked for the brief: '' | 'ask' | 'run' (start once saved)
         );
     """)
+    if "waiting" not in {r[1] for r in conn.execute("PRAGMA table_info(planners)")}:
+        conn.execute("ALTER TABLE planners ADD COLUMN waiting TEXT NOT NULL DEFAULT ''")
 
 
 def _in_days(n):
@@ -56,12 +59,13 @@ def _owner(ws, owner_id):
 def settings(owner_id):
     return team._row("SELECT * FROM planners WHERE owner_id = ?", (owner_id,)) or {
         "owner_id": owner_id, "enabled": 0, "brief": "", "every_days": EVERY_DEFAULT,
-        "next_run_at": "", "updated_at": ""}
+        "next_run_at": "", "updated_at": "", "waiting": ""}
 
 
 def save(ws, owner_id, enabled=None, brief=None, every_days=None):
-    """None leaves a field as it is. Switching on schedules the first run every_days from now."""
-    _, err = _owner(ws, owner_id)
+    """None leaves a field as it is. Switching on schedules the first run every_days from now; with
+    no brief yet it asks the agent to write one. The first non-empty brief starts a run that waits."""
+    s, err = _owner(ws, owner_id)
     if err:
         return {"error": err}
     cur = settings(owner_id)
@@ -75,8 +79,6 @@ def save(ws, owner_id, enabled=None, brief=None, every_days=None):
     if not EVERY_MIN <= every <= EVERY_MAX:
         return {"error": f"every_days must be between {EVERY_MIN} and {EVERY_MAX}"}
     on = bool(cur["enabled"]) if enabled is None else bool(enabled)
-    if on and not brief:
-        return {"error": "write the product brief first: it is all the planner sees of your product"}
     nxt = cur["next_run_at"]
     if not on:
         nxt = ""
@@ -87,7 +89,51 @@ def save(ws, owner_id, enabled=None, brief=None, every_days=None):
                "brief = excluded.brief, every_days = excluded.every_days, "
                "next_run_at = excluded.next_run_at, updated_at = excluded.updated_at",
                (owner_id, int(on), brief, every, nxt, team._so()._now()))
+    if brief and cur["waiting"]:
+        team._exec("UPDATE planners SET waiting = '' WHERE owner_id = ?", (owner_id,))
+        if cur["waiting"] == "run":
+            try:
+                r = start_scout(owner_id)
+            except Exception as e:  # noqa: BLE001 — the brief is saved either way
+                r = {"error": repr(e)}
+            if r.get("error"):
+                print(f"[planner] {s['name']}: {r['error']}", flush=True)
+    elif not brief and on:
+        ask(ws, owner_id, run=True)
+    elif cur["waiting"] == "run" and cur["enabled"] and not on:
+        team._exec("UPDATE planners SET waiting = 'ask' WHERE owner_id = ?", (owner_id,))
+    if brief != cur["brief"]:     # the open Board tab reloads the panel
+        so = team._so()
+        so.publish({"type": "planner", "owner_id": owner_id,
+                    "workspace_id": s.get("workspace_id") or so.DEFAULT_WORKSPACE})
     return settings(owner_id)
+
+
+def ask(ws, owner_id, run=False, force=False):
+    """Ask the agent to write (or update) its brief: one message. run = start a run once it is saved.
+    While an ask is outstanding (asked, brief still empty) only force sends again."""
+    s, err = _owner(ws, owner_id)
+    if err:
+        return {"error": err}
+    cur = settings(owner_id)
+    waiting = "run" if run or cur["waiting"] == "run" else "ask"
+    send = force or not cur["waiting"] or bool(cur["brief"])
+    team._exec("INSERT INTO planners (owner_id, waiting, updated_at) VALUES (?, ?, ?) "
+               "ON CONFLICT(owner_id) DO UPDATE SET waiting = excluded.waiting",
+               (owner_id, waiting, team._so()._now()))
+    if send:
+        name, brief = s["name"], cur["brief"]
+        now = (f"Your current brief is below. Update it if it is out of date.\n\n{brief}\n\n" if brief else "")
+        team._enqueue(owner_id,
+                      f"[PLANNER BRIEF] Write your planner's product brief with "
+                      f"planner_brief(from_role=\"{name}\", text=...).\n\n"
+                      f"Say what the product is, who uses it, what it does today, what matters now, and "
+                      f"what is not wanted. At most {BRIEF_MAX} characters.\n\n"
+                      f"The planner types parts of this text into public web searches. Keep out secrets, "
+                      f"tokens, private names, emails and file paths.\n\n{now}"
+                      f"This is a status message: call planner_brief, no reply to the sender is needed.",
+                      s.get("workspace_id") or team._so().DEFAULT_WORKSPACE)
+    return {"asked": send, "waiting": waiting}
 
 
 def _active(owner_id):
@@ -136,7 +182,7 @@ def _first_message(st, director, name, key, brief):
         return "\n".join(fmt.format(**x) for x in items) or "(none)"
     playbook = team.playbook_text(ROLE).replace("<ROLE_NAME>", name)
     return (f"[SCOUT {st['id']}] Today is {datetime.now():%Y-%m-%d}.\n\n{playbook}\n\n"
-            f"## Product brief (written by the user)\n{brief}\n\n"
+            f"## Product brief\n{brief}\n\n"
             f"## Open cards on the board (titles only)\n{lines(open_cards, '- [{status}] {title}')}\n\n"
             f"## Seen list: already proposed, never propose these again\n{lines(seen, '- {title} — {url}')}\n\n"
             f"## Past decisions by the user, newest first: learn from them\n"
@@ -232,6 +278,9 @@ def run_due():
         s = so.get_session(p["owner_id"])
         if not s or team.is_team_session(s):
             continue
+        if not p["brief"].strip():      # no brief yet: ask once, start when it is saved
+            ask("", p["owner_id"], run=True)
+            continue
         try:
             r = start_scout(p["owner_id"])
         except Exception as e:  # noqa: BLE001 — one planner must not stop the others
@@ -265,8 +314,17 @@ def routes(body, reply, ws_of):
         b = await body(request)
         ws, owner = ws_of(request, b), b.get("owner_id", "")
         _, err = _owner(ws, owner)
-        return reply({"error": err} if err else start_scout(owner), created=not err)
+        if err:
+            return reply({"error": err})
+        if not settings(owner)["brief"].strip():
+            return reply(ask(ws, owner, run=True))
+        return reply(start_scout(owner), created=True)
+
+    async def api_ask(request):
+        b = await body(request)
+        return reply(ask(ws_of(request, b), b.get("owner_id", ""), force=True))
 
     return [Route("/api/planner", api_get),
             Route("/api/planner", api_save, methods=["POST"]),
-            Route("/api/planner/scout", api_scout, methods=["POST"])]
+            Route("/api/planner/scout", api_scout, methods=["POST"]),
+            Route("/api/planner/ask", api_ask, methods=["POST"])]

@@ -451,14 +451,21 @@ for needle, what in (('id="pl-on" role="switch" onchange="plannerSave()"', "the 
                      ('id="pl-every" class="mini" type="number" min="1" max="90"', "the interval"),
                      ('onsubmit="plannerSave(event)"', "Save"),
                      ('id="pl-scout" class="secondary" type="button" onclick="plannerScout()"', "Scout now"),
+                     ('id="pl-ask" class="secondary" type="button" onclick="plannerAsk()"', "the ask button"),
                      ('it cannot read your files or act.', "the hint line")):
     if needle not in bd:
         gaps.add(f"#bd-planner needs {what}")
+pl = bd[bd.index('id="bd-planner"'):bd.index("</form>", bd.index('id="bd-planner"'))]
+brief = re.search(r'<textarea id="pl-brief"[^>]*>', pl)
+if not brief or re.search(r"\b(readonly|disabled)\b", brief[0]):
+    gaps.add("#pl-brief must stay an editable textarea inside #bd-planner")
+if '"/api/planner/ask"' not in JS or "window.plannerAsk = plannerAsk" not in JS:
+    gaps.add("plannerAsk must POST /api/planner/ask and be on window")
 if "plannerLoad().catch(" not in JS[JS.index("async function boardLoad("):JS.index("function bdCard(")]:
     gaps.add("boardLoad must load the planner panel")
 if '"Scouting…" : "Scout now"' not in JS:
     gaps.add("Scout now must show a running state")
-check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now", gaps,
+check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now, ask the agent", gaps,
       "the planner cannot be switched on, scheduled or run from the dashboard")
 
 # Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người

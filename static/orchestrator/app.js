@@ -4866,9 +4866,13 @@ async function plannerSave(e) {
   const body = { owner_id: plOwner, enabled: $("pl-on").checked, brief: $("pl-brief").value.trim(),
     every_days: $("pl-every").value };
   try {
-    plannerRender(await api("/api/planner" + bdQ({}), "POST", body));
+    const r = await api("/api/planner" + bdQ({}), "POST", body);
     plDirty = false;
-    showMsg("pl-msg", body.enabled ? "Saved. The planner is on." : "Saved.", true);
+    plannerRender(r);
+    showMsg("pl-msg", !body.enabled ? "Saved."
+      : r.settings.waiting && !r.settings.brief
+        ? "The planner is on. The agent was asked to write the brief. The first run starts when it is saved."
+        : "Saved. The planner is on.", true);
   } catch (err) {
     let m = String(err);
     try { m = JSON.parse(m).error || m; } catch { /* text */ }
@@ -4879,16 +4883,30 @@ async function plannerSave(e) {
 
 async function plannerScout() {
   $("pl-scout").disabled = true;
-  try { await api("/api/planner/scout" + bdQ({}), "POST", { owner_id: plOwner }); $("pl-msg").textContent = ""; }
-  catch (err) {
+  try {
+    const r = await api("/api/planner/scout" + bdQ({}), "POST", { owner_id: plOwner });
+    if (r.waiting) showMsg("pl-msg", "The agent was asked to write the brief. The run starts when it is saved.", true);
+    else $("pl-msg").textContent = "";
+  } catch (err) {
     let m = String(err);
     try { m = JSON.parse(m).error || m; } catch { /* text */ }
     showMsg("pl-msg", m, false);
   }
   await plannerLoad().catch(() => {});
 }
+async function plannerAsk() {
+  try {
+    await api("/api/planner/ask" + bdQ({}), "POST", { owner_id: plOwner });
+    showMsg("pl-msg", "The agent was asked to write the brief.", true);
+  } catch (err) {
+    let m = String(err);
+    try { m = JSON.parse(m).error || m; } catch { /* text */ }
+    showMsg("pl-msg", m, false);
+  }
+}
 function plannerTyped() { plDirty = true; }
 window.plannerSave = plannerSave; window.plannerScout = plannerScout; window.plannerTyped = plannerTyped;
+window.plannerAsk = plannerAsk;
 
 // ── Live updates (SSE) ───────────────────────────────────────────────────────
 
