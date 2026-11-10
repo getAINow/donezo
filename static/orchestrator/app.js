@@ -1314,10 +1314,6 @@ window.cvFit = cvFit;
 // Element terminal sống NGOÀI chu trình innerHTML của canvas: tạo 1 lần per session,
 // sau mỗi render chỉ re-attach vào .term-slot của card orchestrator → SSE refresh không giết PTY.
 let cvTerms = {};  // sid → {sid, host, started, term, fit, ws}
-// Khóa terminal orch: run tự động (signal [BÁO CÁO] từ worker) đang/đã chạy trên session
-// → PTY cũ hết ngữ cảnh, 2 claude cùng ghi 1 transcript sẽ xung đột. Key theo NAME
-// (bền qua xoay session id); chỉ mở lại khi user bấm 🔄.
-let termLock = {};  // session name → true
 // CLI người dùng chọn cho terminal, theo NAME (bền qua xoay session id) — rỗng = theo engine của
 // session. Chọn CLI KHÁC engine thì backend mở phiên MỚI (id của claude không resume được bằng
 // agy và ngược lại), nên đổi lựa chọn = hủy PTY cũ rồi nối lại.
@@ -1354,8 +1350,8 @@ async function renameCard(sid = selSid) {
   try {
     await api(`/api/sessions/${encodeURIComponent(sid)}/name`, "POST", { name: next });
   } catch (e) { alert("Could not rename: " + e); return; }
-  // Lựa chọn CLI và khoá terminal giữ theo TÊN — không dời theo thì card nối lại bằng CLI mặc định.
-  for (const m of [termCli, termLock]) if (s.name in m) { m[next] = m[s.name]; delete m[s.name]; }
+  // Lựa chọn CLI giữ theo TÊN — không dời theo thì card nối lại bằng CLI mặc định.
+  if (s.name in termCli) { termCli[next] = termCli[s.name]; delete termCli[s.name]; }
   await refreshAll();
 }
 window.renameCard = renameCard;
@@ -1537,19 +1533,31 @@ function startTerm(t) {
   t.term.loadAddon(t.fit);
   t.term.open(t.host);
   if (t.key.startsWith("ed:")) wireEditorTerm(t);
+  t.term.onData((d) => { if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: "i", d })); });
+  connectTerm(t);
+}
+
+// Server giữ luật một-người-ghi: run nền đang chạy (hoặc terminal mở ở tab khác) thì nó đóng WS
+// bằng 4409 — đợi rồi tự nối lại, không bao giờ chạy song song.
+function connectTerm(t) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const path = t.wsPath
     || `/ws/terminal?session=${encodeURIComponent(t.sid)}`
        + (t.cli ? `&cli=${encodeURIComponent(t.cli)}` : "");
   t.ws = new WebSocket(`${proto}://${location.host}${path}`);
   t.ws.binaryType = "arraybuffer";
-  t.ws.onopen = () => fitTerm(t);
+  t.ws.onopen = () => { t.waiting = false; fitTerm(t); };
   t.ws.onmessage = (e) => t.term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data));
   t.ws.onclose = (e) => {
     if (e.code === 4001) { scheduleRefresh(); return; }   // nvim tự thoát (:q, ZZ): card đã đóng ở server
+    if (e.code === 4409) {
+      if (!t.waiting) t.term.write(`\x1b[33m${e.reason || "Agent is working"}, terminal opens when it finishes…\x1b[0m\r\n`);
+      t.waiting = true;
+      t.retry = setTimeout(() => { if (cvTerms[t.key] === t) connectTerm(t); }, 3000);
+      return;
+    }
     if (t.term) t.term.write("\r\n\x1b[31m[disconnected — press 🔄 to reload]\x1b[0m\r\n");
   };
-  t.term.onData((d) => { if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: "i", d })); });
 }
 
 function fitTerm(t) {
@@ -1562,17 +1570,16 @@ function fitTerm(t) {
 function destroyTerm(sid) {
   const t = cvTerms[sid];
   if (!t) return;
+  clearTimeout(t.retry);
   if (t.ws) { try { t.ws.close(); } catch { /* đã đóng */ } }
   if (t.term) t.term.dispose();
   t.host.remove();
   delete cvTerms[sid];
 }
 
-// Reload session/terminal: hủy PTY cũ, gỡ khóa, refetch data (session id có thể đã xoay
-// sau lần resume trước) rồi render lại → attach phiên `claude --resume` mới.
-// Nếu run tự động VẪN đang chạy, refreshAll thấy status=running sẽ khóa lại ngay — an toàn.
+// Reload session/terminal: hủy PTY cũ, refetch data (session id có thể đã xoay sau lần resume
+// trước) rồi render lại → attach phiên `claude --resume` mới. Run nền đang chạy thì server bắt đợi.
 async function reconnectTerm(sid, name) {
-  if (name) delete termLock[name];
   destroyTerm(sid);
   await refreshAll();
 }
@@ -1858,9 +1865,8 @@ function attachTerms() {
     t.cli = slot.dataset.cli || "";   // đọc TRƯỚC startTerm (rAF chạy sau vòng render này)
     t.wsPath = slot.dataset.ws || "";
     slot.appendChild(t.host);
-    // Slot đang khóa: KHÔNG start PTY mới (đợi user bấm 🔄 sau khi run tự động xong).
     requestAnimationFrame(() => {
-      if (!t.started) { if (!slot.dataset.lock) startTerm(t); }
+      if (!t.started) startTerm(t);
       else fitTerm(t);
     });
   }
@@ -1913,21 +1919,6 @@ function agentCard(s, needsYou) {
   const cls = `st-${esc(s.status)}${needsYou ? " needs-you" : ""}`;
 
   {
-    // Run tự động (báo cáo worker → run mới) đang chạy HOẶC đang xếp hàng → khóa chat +
-    // ngắt PTY cũ ngay (2 claude cùng ghi 1 session = xung đột transcript). Tính cả signal
-    // queued để 🔄 trong khe hở giữa 2 run liên tiếp không mở PTY xung đột. Signal pending
-    // chờ approval KHÔNG tính (không tự chạy — đừng khóa oan). Khóa giữ tới khi bấm 🔄.
-    const queued = (cvLast.signals || []).some((sg) =>
-      (sg.to_session === s.id || sg.to_session === s.name) &&
-      (sg.status === "processing" || sg.status === "approved" ||
-       (sg.status === "pending" && !sg.requires_approval)));
-    const busy = s.status === "running" || queued;
-    if (busy) termLock[s.name] = true;
-    const locked = !!termLock[s.name];
-    if (locked) {
-      const t = cvTerms[s.id];
-      if (t && t.ws && t.ws.readyState <= 1) { try { t.ws.close(); } catch { /* đã đóng */ } }
-    }
     // Chọn CLI cho terminal. CLI trùng engine của session = resume đúng phiên đó; CLI khác =
     // phiên MỚI trong cùng cwd (nhãn nói rõ để không tưởng mất ngữ cảnh vì lỗi).
     const eng = engineOfModel(s.model);
@@ -1967,18 +1958,12 @@ function agentCard(s, needsYou) {
       ${needsYou ? `<span class="needs-badge">needs you</span>` : ""}
       ${crewBadge(s) || (s.subtasks?.total ? `<span class="role-badge" title="Delegates work to sub-agents">director</span>` : "")}
       ${meterHtml(s)}
+      ${s.term_queue ? `<span class="needs-badge" title="Signals wait for the open terminal to finish its turn, then are typed in one at a time">${s.term_queue} message${s.term_queue > 1 ? "s" : ""} waiting</span>` : ""}
       <span class="spacer"></span>
       ${adopt}
       ${sidSel}
       <span class="node-meta">${esc(modelLabel(s.model))} · ${esc(s.effort || DEFAULT_EFFORT)}</span>
     </div>`;
-    const lock = busy
-      ? `<div class="term-lock">⏳ An automatic run is in progress (handling a report from another agent)…<br>
-           Click to watch it · when it finishes, press 🔄 to chat again</div>`
-      : locked
-        ? `<div class="term-lock">✅ The automatic run finished — press 🔄 to load the new context and keep chatting.<br>
-           Click to review that run.</div>`
-        : "";
     return `<div class="agent-card orch-term ${cls}" data-sid="${esc(s.id)}">
       ${head}
       <div class="orch-body">
@@ -1988,7 +1973,7 @@ function agentCard(s, needsYou) {
           <button class="icon-btn" onclick="reconnectTerm('${esc(s.id)}','${esc(s.name)}')"
             title="Reload the session/terminal (restarts the selected CLI)">${ic("refresh", "sm")}</button>
         </div>
-        <div class="term-slot" data-sid="${esc(s.id)}" data-key="${esc(s.id)}" data-cli="${cli}"${locked ? ` data-lock="1"` : ""}>${lock}</div>
+        <div class="term-slot" data-sid="${esc(s.id)}" data-key="${esc(s.id)}" data-cli="${cli}"></div>
       </div>
     </div>`;
   }
@@ -2877,11 +2862,8 @@ function cvInit() {
     layoutZones(); redrawEdges();
   });
   // Click vào THÂN card (ngoài header — header đi đường pointerup ở trên) → chọn card.
-  // Card 👑: terminal (.term-slot) miễn trừ, nhưng overlay khóa (.term-lock) thì mở thẳng
-  // drawer để xem run tự động đang chạy — đó là thứ người dùng đang chờ.
+  // Card 👑: terminal (.term-slot) miễn trừ.
   cv.addEventListener("click", (e) => {
-    const lock = e.target.closest(".term-lock");
-    if (lock) { openSessionRun(lock.closest(".agent-card").dataset.sid); return; }
     if (e.target.closest("button, select, input, textarea, option, .term-slot, .node-head, .zone-head")) return;
     const card = e.target.closest(".agent-card");
     if (card && card.dataset.sid) selectNode(card.dataset.sid);

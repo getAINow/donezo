@@ -82,8 +82,8 @@ body_css = style[style.index("}", tokens_end):]
 stray = set(re.findall(r"#[0-9a-fA-F]{3,8}\b", body_css)) | set(
     re.findall(r"rgba?\([^)]*\)", body_css)
 )
-# VS Code tự sơn nền của nó; term-lock là overlay trên terminal, luôn tối ở cả 2 theme.
-stray -= {"#1e1e1e", "rgba(8,10,14,.88)", "#e6e8eb"}
+# VS Code tự sơn nền của nó.
+stray -= {"#1e1e1e"}
 check("no hardcoded colors outside the token block", stray,
       "put it in :root / :root[data-theme=dark] instead")
 
@@ -397,6 +397,19 @@ if ('kg-looked_up' not in kgjs or 'id="kg-arrow-looked_up"' not in HTML or '.kg-
     gaps.add("looked_up links need their own class, arrow, legend entry and the agent's gaps on hover")
 check("the Knowledge tab is wired and read-only", gaps,
       "the tab button does nothing, or the read-only graph writes data")
+
+# Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người
+# dùng đang gõ khi thấy signal/run, và khoá tới khi bấm 🔄 — chỉ chạy khi card đang hiện trên màn hình.
+gaps = set()
+card = JS[JS.index("function agentCard("):JS.index("function quickBtns(")]
+if re.search(r"termLock|data-lock|\.ws\.close\(", card) or "termLock" in JS:
+    gaps.add("agentCard still closes the terminal websocket or keeps a termLock")
+if 'e.code === 4409' not in JS or "connectTerm(t)" not in JS[JS.index("e.code === 4409"):][:400]:
+    gaps.add("startTerm must wait on the server's 4409 (busy) and reconnect by itself")
+if "s.term_queue" not in card or "waiting" not in card:
+    gaps.add("the card must show how many messages wait for the open terminal")
+check("the terminal is never killed by the browser for a signal or a run", gaps,
+      "the single-writer rule lives on the server")
 
 if fails:
     print("\n" + "\n\n".join(fails))
