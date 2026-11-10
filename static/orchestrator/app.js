@@ -2900,14 +2900,14 @@ const MODEL_TABS = [
   // KHÔNG có card "Auto" ở tab Claude: id của nó phải là "" (bỏ cờ --model), mà form đọc model
   // rỗng là CHƯA CHỌN → chọn Auto xong bấm Spawn ăn "Pick a model", không đường nào ra.
   // Tab Gemini vẫn có Auto vì id của nó là "agy" — một giá trị thật, không lẫn với rỗng.
-  // Alias đi theo bản mới nhất mà claude CLI biết (Anthropic API: fable → Fable 5.1, opus → Opus
-  // 5.5, sonnet → Sonnet 5.5, haiku → Haiku 5.5); id đầy đủ ghim đúng một bản. Cập nhật 2026-11.
+  // Alias đi theo bản mới nhất mà claude CLI biết (Anthropic API: fable → Fable 5.2, opus → Opus
+  // 5.5, sonnet → Sonnet 5.5, haiku → Haiku 5.5); id đầy đủ ghim đúng một bản. Cập nhật 2026-11-10.
   { engine: "claude", label: "Claude", note: "claude CLI · API credits Anthropic", models: [
     { id: "fable", name: "Fable · alias", desc: "Always the latest Fable — the most capable model, for the hardest and longest runs" },
     { id: "opus", name: "Opus · alias", desc: "Always the latest Opus — the best default for agentic coding" },
     { id: "sonnet", name: "Sonnet · alias", desc: "Always the latest Sonnet — daily coding at a lower price" },
     { id: "haiku", name: "Haiku · alias", desc: "Always the latest Haiku — fast and cheap" },
-    { id: "claude-fable-5-1", name: "Fable 5.1", desc: "Most capable — deep reasoning and long autonomous work; costs the most (claude CLI 2.1.257+)" },
+    { id: "claude-fable-5-2", name: "Fable 5.2", desc: "Most capable — deep reasoning and long autonomous work; costs the most (claude CLI 2.1.321+)" },
     { id: "claude-opus-5-5", name: "Opus 5.5", desc: "Latest Opus — complex reasoning and long agentic work (claude CLI 2.1.280+)" },
     { id: "claude-sonnet-5-5", name: "Sonnet 5.5", desc: "Latest Sonnet — strong everyday coding, 1M context (claude CLI 2.1.284+)" },
     { id: "claude-haiku-5-5", name: "Haiku 5.5", desc: "Latest Haiku — fastest and cheapest, 1M context (claude CLI 2.1.293+)" },
