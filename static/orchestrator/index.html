@@ -737,6 +737,8 @@
     border-width: 0 2px 2px 0; transform: rotate(-45deg); transition: transform .15s; }
   .rule[open] > summary::after { transform: rotate(45deg); }
   .rule > .page-form { padding-top: 0; }
+  .rule > .rule-line { min-height: 48px; padding: 8px 15px; }
+  .rule-line .hint { display: block; margin: 0; font-size: 12px; }
   .tg-edges { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
   .tg-edge { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 2px 4px 2px 9px;
     border: 1px solid var(--border); border-radius: 999px; background: var(--panel2); }
@@ -1522,10 +1524,7 @@
                   </div>
                 </div>
               </details>
-              <details class="rule">
-                <summary><span>Models per role<span id="trs-models" class="hint"></span></span></summary>
-                <div id="team-models" class="page-form"></div>
-              </details>
+              <div class="rule"><div class="rule-line">Sub-agents and verifiers<span id="trs-models" class="hint"></span></div></div>
               <details class="rule">
                 <summary><span>Improve playbooks<span id="trs-props" class="hint"></span></span></summary>
                 <div class="page-form">

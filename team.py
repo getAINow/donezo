@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 TEAM_SENDER = "team"
-# playbook → (vai model, có worktree riêng không). Chỉ bốn cái này director tự gọi được.
+# playbook → (vai, có worktree riêng không). Chỉ bốn cái này director tự gọi được.
 PLAYBOOKS = {
     "feature": ("implement", True),
     "bugfix": ("implement", True),
@@ -47,8 +47,13 @@ PLAYBOOKS = {
     "investigate": ("investigate", False),
 }
 SYSTEM_PLAYBOOKS = ("verify", "reflect")
-# Vai rỗng = Claude (xem resolve_model). agy chỉ chạy khi NGƯỜI DÙNG chọn model Gemini cho vai đó.
-MODEL_ROLES = ("implement", "investigate", "verify")
+# Mọi phiên đội (builder, verifier, reflect) chạy đúng model này — không theo director, không theo
+# setting team_models:* cũ (bị bỏ qua). Không đổi model giữa chừng; khó thì nâng effort.
+TEAM_MODEL = "claude-opus-5-5"
+TEAM_EFFORTS = ("low", "medium", "high", "xhigh")
+VERIFY_EFFORT = "high"
+LEARN_WINDOW = 5       # learned start: nhìn bấy nhiêu việc xong gần nhất cùng playbook
+LEARN_STEPPED = 2      # …bấy nhiêu việc trong đó phải nâng effort thì việc mới bắt đầu cao hơn
 MAX_ATTEMPTS = max(1, int(os.environ.get("ORCH_SUBTASK_MAX_ATTEMPTS", "3")))
 MAX_ACTIVE = max(1, int(os.environ.get("ORCH_SUBAGENTS_MAX", "4")))
 ACTIVE = ("queued", "running", "verifying", "fixing")
@@ -165,7 +170,9 @@ def migrate(conn):
     tcols = [r[1] for r in conn.execute("PRAGMA table_info(subtasks)").fetchall()]
     for col, ddl in (("run_key", "TEXT NOT NULL DEFAULT ''"), ("guard", "TEXT NOT NULL DEFAULT ''"),
                      ("max_attempts", "INTEGER NOT NULL DEFAULT 0"),
-                     ("rechecking", "INTEGER NOT NULL DEFAULT 0")):
+                     ("rechecking", "INTEGER NOT NULL DEFAULT 0"),
+                     # effort_start: mức lúc giao; effort: mức hiện tại (nâng sau mỗi FAIL)
+                     ("effort_start", "TEXT NOT NULL DEFAULT ''"), ("effort", "TEXT NOT NULL DEFAULT ''")):
         if col not in tcols:
             conn.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {ddl}")
     scols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
@@ -443,39 +450,41 @@ def playbook_text(name, repo=""):
         return ""
 
 
-def installed_engines():
-    so = _so()
-    bins = {"claude": so.CLAUDE_BIN, "agy": so.AGY_BIN}
-    return [e for e, b in bins.items() if shutil.which(b)]
+def default_effort(playbook):
+    return "medium" if playbook == "investigate" else "high"
 
 
-def model_roles(workspace_id):
-    so = _so()
-    try:
-        saved = json.loads(so.get_setting(f"team_models:{workspace_id}", "{}") or "{}")
-    except (json.JSONDecodeError, ValueError):
-        saved = {}
-    # "@other" (verifier sang CLI khác = agy) đã bỏ: giá trị cũ còn lưu → về Claude.
-    return {r: v if (v := str(saved.get(r, ""))) != "@other" else "" for r in MODEL_ROLES}
+def step_effort(effort):
+    """Một nấc lên, trần xhigh."""
+    i = TEAM_EFFORTS.index(effort) if effort in TEAM_EFFORTS else TEAM_EFFORTS.index("high")
+    return TEAM_EFFORTS[min(i + 1, len(TEAM_EFFORTS) - 1)]
 
 
-def set_model_roles(workspace_id, roles):
-    cur = model_roles(workspace_id)
-    for r in MODEL_ROLES:
-        if r in roles:
-            cur[r] = str(roles[r] or "").strip()
-    _so().set_setting(f"team_models:{workspace_id}", json.dumps(cur))
-    return cur
+def _stepped(st):
+    a, b = st.get("effort_start") or "", st.get("effort") or ""
+    return a in TEAM_EFFORTS and b in TEAM_EFFORTS and TEAM_EFFORTS.index(b) > TEAM_EFFORTS.index(a)
 
 
-def resolve_model(workspace_id, role, director):
-    """Model cho một vai: cái người dùng chọn ở tab Team, không thì Claude — model của director
-    nếu director chạy Claude, director chạy agy thì Claude mặc định ('')."""
-    want = model_roles(workspace_id).get(role, "")
-    if want:
-        return want
-    dm = director.get("model", "")
-    return dm if _so().engine_from_model(dm) == "claude" else ""
+def start_effort(workspace_id, playbook, effort=""):
+    """Mức bắt đầu: director chọn (hoặc mặc định theo playbook), +1 nấc nếu ≥2 trong 5 việc xong
+    gần nhất cùng playbook đã phải nâng. Suy thẳng từ bảng subtasks — tự hạ khi việc gần đây qua
+    ngay lần đầu."""
+    base = effort or default_effort(playbook)
+    recent = _rows(f"SELECT effort_start, effort FROM subtasks WHERE workspace_id = ? AND playbook = ? "
+                   f"AND kind = 'subagent' AND status IN ('passed', 'failed') "
+                   f"ORDER BY {_ENDED} DESC, id DESC LIMIT ?", (workspace_id, playbook, LEARN_WINDOW))
+    return step_effort(base) if sum(map(_stepped, recent)) >= LEARN_STEPPED else base
+
+
+def effort_line(st):
+    """'effort: high' hoặc 'effort: medium → high (stepped up …)'. Rỗng: handoff / việc cũ."""
+    a, b = st.get("effort_start") or "", st.get("effort") or ""
+    if not b:
+        return ""
+    if not _stepped(st):
+        return f"effort: {b}"
+    n = TEAM_EFFORTS.index(b) - TEAM_EFFORTS.index(a)
+    return f"effort: {a} → {b} (stepped up {n} level{'s' if n > 1 else ''} after a verifier FAIL)"
 
 
 # ─── Signal & thông điệp ─────────────────────────────────────────────────────
@@ -558,6 +567,8 @@ def _outcome_msg(st, passed):
     if st["kind"] == "handoff":
         head = "[HANDOFF VERIFIED]" if passed else "[HANDOFF FAILED]"
     lines = [f"{head} {st['id']} · {st['title'] or st['playbook']}"]
+    if effort_line(st):
+        lines.append(effort_line(st))
     if passed and st.get("branch"):
         lines.append(f"Verified at commit {st['head_sha'][:12]} on branch {st['branch']}. "
                      f"Review: git diff HEAD...{st['branch']}  ·  take it: git merge --no-ff {st['branch']}")
@@ -593,7 +604,7 @@ def _active_count(director_id):
     return r["n"] if r else 0
 
 
-def spawn_subagent(director_id, playbook, brief, done_when, title="", model=""):
+def spawn_subagent(director_id, playbook, brief, done_when, title="", effort=""):
     """Xếp hàng một sub-agent. Trả {id, status} ngay — dựng phiên (một lượt CLI đầy đủ) chạy nền,
     director không phải chờ. Lỗi lúc dựng: subtask 'failed' kèm lý do + báo director."""
     so = _so()
@@ -612,30 +623,35 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", model=""):
         return {"error": "done_when is required: write the observable check an independent "
                          "verifier will run (a command and its expected output, a flow in the "
                          "running app, a value read back)"}
+    effort = str(effort or "").strip().lower()
+    if effort and effort not in TEAM_EFFORTS:
+        return {"error": f"effort must be one of: {', '.join(TEAM_EFFORTS)} (or empty for the "
+                         f"playbook's default)"}
     if _active_count(director_id) >= MAX_ACTIVE:
         return {"error": f"{MAX_ACTIVE} sub-agents are already active for you — wait for one to "
                          f"finish (or cancel one). Fewer, deeper units beat many shallow ones."}
     st_id, now = _new_id(), so._now()
+    ws = director.get("workspace_id") or so.DEFAULT_WORKSPACE
+    effort = start_effort(ws, playbook, effort)
     _exec("INSERT INTO subtasks (id, workspace_id, director_id, kind, playbook, title, brief, "
-          "done_when, model, status, created_at, updated_at) "
-          "VALUES (?, ?, ?, 'subagent', ?, ?, ?, ?, ?, 'queued', ?, ?)",
-          (st_id, director.get("workspace_id") or so.DEFAULT_WORKSPACE, director_id, playbook,
-           str(title or "")[:120], str(brief), str(done_when), str(model or ""), now, now))
+          "done_when, model, effort_start, effort, status, created_at, updated_at) "
+          "VALUES (?, ?, ?, 'subagent', ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+          (st_id, ws, director_id, playbook, str(title or "")[:120], str(brief), str(done_when),
+           TEAM_MODEL, effort, effort, now, now))
     so.publish({"type": "team", "subtask": st_id, "status": "queued",
                 "workspace_id": director.get("workspace_id")})
     _spawn_bg(_start_subagent(st_id), st_id)
     return {"id": st_id, "status": "queued"}
 
 
-async def _spawn_session(name, cwd, playbook, model, director, workspace_id, repo):
-    """Dựng một phiên đội. Trả (session, err)."""
+async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo):
+    """Dựng một phiên đội trên TEAM_MODEL ở mức effort cho trước. Trả (session, err)."""
     so = _so()
     # Theo cwd, không theo repo: subtask handoff không lưu repo mà verifier của nó vẫn chạy ở đây.
     await asyncio.to_thread(_exclude_team_skills, cwd)
-    eng = so.engine_from_model(model)
-    res = await so.engine_for(eng).spawn(
-        name, cwd=cwd, skill=playbook_text(playbook, repo), model=model,
-        effort=director.get("effort", ""), permission_mode=director.get("permission_mode", ""),
+    res = await so.engine_for("claude").spawn(
+        name, cwd=cwd, skill=playbook_text(playbook, repo), model=TEAM_MODEL,
+        effort=effort, permission_mode=director.get("permission_mode", ""),
         workspace_id=workspace_id)
     if not res or res.get("error"):
         return None, (res or {}).get("error") or "spawn failed"
@@ -666,13 +682,11 @@ async def _start_subagent(st_id):
         fields.update(worktree=wt, branch=branch, base_sha=base, head_sha=base)
     if not write:
         fields["guard"] = await asyncio.to_thread(snapshot, cwd)
-    model = st["model"] or resolve_model(st["workspace_id"], PLAYBOOKS[st["playbook"]][0], director)
-    fields["model"] = model
     st = _update(st_id, _from=("queued",), **fields)
     if st is None:
         return
     name = f"sub-{st_id[3:]}-{st['playbook']}"
-    sess, err = await _spawn_session(name, cwd, st["playbook"], model, director,
+    sess, err = await _spawn_session(name, cwd, st["playbook"], st["effort"], director,
                                      st["workspace_id"], repo)
     if err:
         return _fail(get_subtask(st_id), f"could not start the sub-agent: {err}")
@@ -756,7 +770,7 @@ async def _after_work(st, result):
         await _start_verifier(st, _from=("running", "fixing"))
 
 
-async def _start_verifier(st, _from=("verifying",)):
+async def _start_verifier(st, _from=("verifying",), effort=VERIFY_EFFORT):
     so = _so()
     builder = so.get_session(st["session_id"]) or {}
     director = so.get_session(st["director_id"]) or builder
@@ -768,11 +782,10 @@ async def _start_verifier(st, _from=("verifying",)):
                  run_key=secrets.token_hex(8), guard=guard)
     if st is None:
         return
-    model = resolve_model(st["workspace_id"], "verify", director)
     n = _row("SELECT COUNT(*) n FROM sessions WHERE team_role = 'verifier' AND name LIKE ?",
              (f"sub-{st['id'][3:]}-verify%",))["n"] + 1
     name = f"sub-{st['id'][3:]}-verify{n}"
-    sess, err = await _spawn_session(name, cwd, "verify", model, director, st["workspace_id"],
+    sess, err = await _spawn_session(name, cwd, "verify", effort, director, st["workspace_id"],
                                      st["repo"])
     if err:
         return _fail(get_subtask(st["id"]), f"could not start a verifier: {err}")
@@ -819,8 +832,15 @@ async def _after_verify(st, result):
     if st is None:
         return
     if tampered or not v:
-        # Lỗi của NGƯỜI KIỂM, không phải của người làm: kiểm lại bằng một verifier mới.
-        return await _start_verifier(st, _from=("fixing",))
+        # Lỗi của NGƯỜI KIỂM, không phải của người làm: kiểm lại bằng một verifier mới, cao hơn một nấc.
+        return await _start_verifier(st, _from=("fixing",), effort=step_effort(VERIFY_EFFORT))
+    if st["kind"] == "subagent" and st["effort"] in TEAM_EFFORTS:
+        # Handoff thì không: builder là card thường của người dùng, effort của nó không phải của đội.
+        effort = step_effort(st["effort"])
+        so.set_session_effort(st["session_id"], effort)
+        st = _update(st["id"], _from=("fixing",), effort=effort)
+        if st is None:
+            return
     sig = _enqueue(st["session_id"], _fix_msg(st, findings), st["workspace_id"])
     _attach(st["id"], sig, _from=("fixing",))
 
@@ -1272,16 +1292,15 @@ async def _start_reflect(st_id, cwd):
     director = so.get_session(st["director_id"])
     if not director:
         return _fail(st, "agent was removed", notify=False)
-    model = resolve_model(st["workspace_id"], "investigate", director)
     name = f"sub-{st_id[3:]}-reflect"
     guard = await asyncio.to_thread(snapshot, cwd)
-    sess, err = await _spawn_session(name, cwd, "reflect", model, director, st["workspace_id"],
+    sess, err = await _spawn_session(name, cwd, "reflect", VERIFY_EFFORT, director, st["workspace_id"],
                                      st["repo"])
     if err:
         return _fail(get_subtask(st_id), f"could not start reflection: {err}", notify=False)
     _set_team(sess["id"], director["id"], "reflect")
     key = secrets.token_hex(8)
-    if _update(st_id, _from=("queued",), session_id=sess["id"], status="running", model=model,
+    if _update(st_id, _from=("queued",), session_id=sess["id"], status="running", model=TEAM_MODEL,
                run_key=key, guard=guard) is None:
         return
     msg = (f"[REFLECT {st_id}]\n{st['brief']}\n\nWhen done call propose_skill_change("
@@ -1393,7 +1412,7 @@ def _items(subs, sessions):
         v = _verdict(st)
         items.append({
             **{k: st[k] for k in ("id", "director_id", "session_id", "verifier_id", "kind",
-                                  "playbook", "title", "brief", "done_when", "model", "status",
+                                  "playbook", "title", "brief", "done_when", "model", "effort_start", "effort", "status",
                                   "attempts", "branch", "worktree", "head_sha", "base_sha", "reason",
                                   "report", "target", "discarded", "rechecking", "created_at",
                                   "updated_at", "ended_at")},
@@ -1402,7 +1421,7 @@ def _items(subs, sessions):
             "director_name": (sessions.get(st["director_id"]) or {}).get("name", ""),
             "max_attempts": _cap(st), **_run_totals(sess_ids),
             "last": _last_event(sess_ids) if st["status"] in ACTIVE else None,
-            "isolated": bool(st["worktree"]),
+            "isolated": bool(st["worktree"]), "effort_line": effort_line(st),
         })
     return items
 
@@ -1484,7 +1503,7 @@ def overview(workspace_id, page=None):
         "directors": sorted(directors, key=lambda d: (-d["active"], d["name"])),
         **paged, "decisions": decisions, "proposals": proposals,
         "edges": edges(workspace_id), "graph_mode": graph_mode(workspace_id),
-        "models": model_roles(workspace_id), "engines": installed_engines(),
+        "team_model": TEAM_MODEL, "learned_effort": {p: start_effort(workspace_id, p) for p in PLAYBOOKS},
         "playbooks": list(PLAYBOOKS), "max_active": MAX_ACTIVE, "max_attempts": MAX_ATTEMPTS,
         # Mốc giờ CỦA SERVER: mọi timestamp là giờ local không múi của server, trình duyệt ở múi
         # khác thì tự tính tuổi sẽ lệch đúng số giờ chênh — dashboard đo lệch theo mốc này.
@@ -1578,7 +1597,7 @@ def routes():
     async def api_spawn(request: Request):
         b = await body(request)
         return reply(spawn_subagent(b.get("director_id", ""), b.get("playbook", ""), b.get("brief", ""),
-                                    b.get("done_when", ""), b.get("title", ""), b.get("model", "")),
+                                    b.get("done_when", ""), b.get("title", ""), b.get("effort", "")),
                      created=True)
 
     async def api_cancel(request: Request):
@@ -1608,10 +1627,6 @@ def routes():
             return reply({"mode": set_graph_mode(ws, b["mode"])})
         return reply(add_edge(ws, b.get("from_role"), b.get("to_role")))
 
-    async def api_models(request: Request):
-        b = await body(request)
-        return reply(set_model_roles(ws_of(request, b), b.get("roles") or {}))
-
     async def api_reflect(request: Request):
         b = await body(request)
         target = f"role:{b['session_id']}" if b.get("session_id") else f"playbook:{b.get('playbook', '')}"
@@ -1632,7 +1647,6 @@ def routes():
         Route("/api/team/subtasks/{st}/discard", api_discard, methods=["POST"]),
         Route("/api/team/subtasks/{st}/diff", api_diff),
         Route("/api/team/edges", api_edges, methods=["POST"]),
-        Route("/api/team/models", api_models, methods=["POST"]),
         Route("/api/team/reflect", api_reflect, methods=["POST"]),
         Route("/api/team/proposals/{pid:int}", api_decide, methods=["POST"]),
     ]

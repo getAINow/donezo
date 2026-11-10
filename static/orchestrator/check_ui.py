@@ -411,6 +411,17 @@ if "s.term_queue" not in card or "waiting" not in card:
 check("the terminal is never killed by the browser for a signal or a run", gaps,
       "the single-writer rule lives on the server")
 
+# Đội chạy cố định Claude Opus 5.5 (team.TEAM_MODEL): picker model theo vai mà còn là người dùng
+# chọn Gemini, server lặng lẽ bỏ qua, và /api/team/models đã không còn.
+gaps = set()
+for needle in ("team-models", "teamModel", "TEAM_ROLES", "TEAM.models", "/api/team/models", "Models per role"):
+    if needle in JS or needle in HTML:
+        gaps.add(f"{needle} is still in the dashboard")
+if 'id="trs-models"' not in HTML or "TEAM.learned_effort" not in JS or "s.effort_line" not in JS:
+    gaps.add("the Team tab must show the fixed model with the learned start, and each card its effort")
+check("the Team tab has no per-role model pickers", gaps,
+      "sub-agents always run Claude Opus 5.5; only effort varies")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)

@@ -93,6 +93,11 @@ director's folder is not a git repository, a sub-agent has no worktree and share
   <li><strong>It may not edit.</strong> If files change while it runs, its verdict is thrown away.</li>
   <li><strong>Each verdict is tied to a commit.</strong> A pass reads <span class="ui">Verified</span> at that commit.</li>
   <li><strong>Fail goes back.</strong> The findings return to the same sub-agent to fix, then a new verifier checks again.</li>
+  <li><strong>A fail raises the effort.</strong> Each sub-agent starts at the effort the director picked (by default
+    <code>medium</code> for investigate, <code>high</code> otherwise). Each fail moves it one level up, to
+    <code>xhigh</code> at most. The verifier runs at <code>high</code>, or <code>xhigh</code> when it is re-run because
+    the last one gave no verdict. If 2 of the last 5 tasks of a playbook needed a step-up, new ones start one level higher.
+    Cards and messages to the director show the effort, for example <code>effort: medium → high</code>.</li>
   <li><strong>It stops at a limit.</strong> After 3 failed verifications (<code>ORCH_SUBTASK_MAX_ATTEMPTS</code>) the work is
     marked failed, the director is told, and it shows up on <a href="control.html#home">Home</a>.</li>
 </ul>
@@ -140,8 +145,8 @@ sub-agent show its task id. Read it when you want to know why the work was split
     signal any other. <span class="ui">Enforced — only these edges may signal</span> allows only the sender and receiver
     pairs you listed. Add them with <span class="ui">Add edge</span>, or with
     <span class="ui">Learn from recent signals</span>. People and sub-agent results always get through.</li>
-  <li><span class="ui">Models per role</span>: which model runs builders, investigators and verifiers. Without a choice,
-    sub-agents run on Claude, using the director's model if it runs Claude. Gemini is used only if you pick it here.</li>
+  <li><span class="ui">Sub-agents and verifiers</span>: they always run Claude Opus 5.5, whatever model the director
+    uses. The line also shows the <em>learned start</em>: the effort each playbook starts at right now.</li>
 </ul>
 
 <h2 id="reflect">Reflect</h2>
