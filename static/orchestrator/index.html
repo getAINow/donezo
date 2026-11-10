@@ -775,6 +775,9 @@
   .tb-head button { margin-left: auto; font-size: 11px; padding: 2px 8px; }
   .bd-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
   .st-card.s-dropped { opacity: .75; }
+  #bd-cols.bd-five { grid-template-columns: repeat(5, minmax(180px, 1fr)); }
+  .tb-dot.proposed { background: var(--amber-ink); }
+  .bd-link { color: var(--accent); }
 
   /* Khung + form dùng chung của các tab dạng trang (Team). */
   .page-form { display: grid; gap: 8px; padding: 12px 15px; }
@@ -1405,7 +1408,8 @@
       <div class="tabs" role="tablist" aria-label="Workspace views">
         <button id="tab-btn-agents" class="tab active" role="tab" onclick="switchTab('agents')">Canvas</button>
         <button id="tab-btn-board" class="tab" role="tab" onclick="switchTab('board')"
-          title="Each agent's backlog: work it holds, and where its sub-agents are with it">Board</button>
+          title="Each agent's backlog: work it holds, and where its sub-agents are with it">
+          Board<span id="board-proposed" class="tab-count" hidden title="Proposals waiting for your decision"></span></button>
         <button id="tab-btn-team" class="tab" role="tab" onclick="switchTab('team')"
           title="Sub-agents your directors delegated to, their verification, and the team's rules">
           Team<span id="team-live" class="tab-count" hidden></span></button>

@@ -12,8 +12,10 @@ database, a real git repo and a scripted fake CLI. What can go wrong quietly:
     python3 check_board.py
 """
 import asyncio
+import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -302,9 +304,114 @@ async def case_f():
           f"{n} → {left}")
 
 
+def case_g():
+    c = board.propose(WS, "dir-1", "Try idea P", "why", url="https://example.com/post")
+    check("g) propose makes a proposed card from the planner with the url",
+          (c.get("status"), c.get("source"), c.get("url"), c.get("decision")) == ("proposed", "planner",
+                                                                                 "https://example.com/post", ""),
+          str(c))
+    n = len(team._rows("SELECT id FROM board_cards"))
+    bad = board.propose(WS, "dir-1", "Evil", url="javascript:alert(1)")
+    check("g) a javascript: url is refused and makes no card",
+          bad.get("error") and len(team._rows("SELECT id FROM board_cards")) == n, str(bad))
+
+    old = sqlite3.connect(TMP / "old.db")
+    old.executescript("""CREATE TABLE board_cards (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id TEXT NOT NULL DEFAULT 'default', owner_id TEXT NOT NULL, title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'todo',
+        source TEXT NOT NULL DEFAULT 'user', subtask_id TEXT NOT NULL DEFAULT '',
+        note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO board_cards (owner_id, title, created_at, updated_at) VALUES ('d', 'kept', 't', 't');""")
+    board.migrate(old)
+    board.migrate(old)
+    cols = {r[1] for r in old.execute("PRAGMA table_info(board_cards)")}
+    rows = old.execute("SELECT title, url, decision, decision_reason FROM board_cards").fetchall()
+    old.close()
+    check("g) an old-shape table gains url/decision/decision_reason and keeps its rows",
+          {"url", "decision", "decision_reason"} <= cols and rows == [("kept", "", "", "")], f"{cols} {rows}")
+
+
+def case_h():
+    a = board.propose(WS, "dir-1", "Approve me")
+    res = board.decide(WS, a["id"], True, "worth  a try")
+    check("h) approve → todo, approved, reason stored and in the note",
+          (res.get("status"), res.get("decision"), res.get("decision_reason")) == ("todo", "approved", "worth a try")
+          and "approved" in res["note"] and "worth a try" in res["note"], str(res))
+    r = board.propose(WS, "dir-1", "Reject me")
+    res = board.decide(WS, r["id"], False, "out of scope")
+    check("h) reject → dropped, rejected, reason stored",
+          (res.get("status"), res.get("decision"), res.get("decision_reason")) == ("dropped", "rejected", "out of scope")
+          and "rejected" in res["note"], str(res))
+    again = board.decide(WS, a["id"], False)
+    check("h) deciding a card that is not proposed is refused",
+          again.get("error") and card(a["id"])["status"] == "todo", str(again))
+
+
+async def case_i():
+    import httpx
+    p = board.propose(WS, "dir-1", "Wait for me")
+    plain = await add("lead", "Plain card")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()),
+                                 base_url="http://test") as c:
+        r1 = await c.post(f"/api/board/{p['id']}", json={"workspace_id": WS, "status": "todo"})
+        r2 = await c.post(f"/api/board/{plain}", json={"workspace_id": WS, "status": "proposed"})
+        r3 = await c.post(f"/api/board/{p['id']}", json={"workspace_id": WS, "title": "Renamed idea"})
+    check("i) HTTP cannot move a proposed card or set a card to proposed; the title still edits",
+          (r1.status_code, r2.status_code, r3.status_code) == (400, 400, 200)
+          and card(p["id"])["status"] == "proposed" and card(plain)["status"] == "todo"
+          and card(p["id"])["title"] == "Renamed idea", f"{r1.text} {r2.text} {r3.text}")
+    m1 = await signal_mcp.board_update(from_role="lead", card_id=p["id"], status="todo")
+    m2 = await signal_mcp.board_update(from_role="lead", card_id=plain, status="proposed")
+    check("i) board_update cannot move a proposed card or set a card to proposed",
+          all(m.startswith("⛔") and "only the user approves or rejects a proposal" in m for m in (m1, m2))
+          and card(p["id"])["status"] == "proposed" and card(plain)["status"] == "todo", f"{m1} / {m2}")
+    rows = json.loads(await signal_mcp.board_list(from_role="lead", status="proposed"))
+    check("i) board_list shows a proposal with url and decision fields",
+          rows and {"url", "decision", "decision_reason"} <= set(rows[0]) and rows[0]["status"] == "proposed",
+          str(rows)[:200])
+    n = len(team._rows("SELECT id FROM subtasks"))
+    res = await spawn(p["id"])
+    check("i) spawn_subagent(card_id=<proposal>) is refused and creates no task",
+          str(res).startswith("⛔") and len(team._rows("SELECT id FROM subtasks")) == n
+          and card(p["id"])["subtask_id"] == "", str(res))
+
+
+async def case_j():
+    import httpx
+    so.register_session("dir-b", "lead-b", cwd=str(REPO), model="", workspace_id=WS_B)
+    team._exec("DELETE FROM board_cards WHERE status = 'proposed'")    # start the counts from zero
+    p1 = board.propose(WS, "dir-1", "One")
+    board.propose(WS, "dir-1", "Two")
+    board.propose(WS_B, "dir-b", "Three")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()),
+                                 base_url="http://test") as c:
+        before = (await c.get("/api/board", params={"workspace_id": WS})).json()["proposed"]
+        everywhere = (await c.get("/api/board/proposed")).json()
+        check("j) proposal counts per owner and per workspace",
+              before == {"dir-1": 2} and everywhere == {WS: 2, WS_B: 1}, f"{before} {everywhere}")
+        r = await c.post(f"/api/board/{p1['id']}/decide", json={"workspace_id": WS_B, "approve": True})
+        check("j) workspace B cannot decide a card of workspace A",
+              r.status_code == 404 and card(p1["id"])["status"] == "proposed", r.text)
+        r = await c.post(f"/api/board/{p1['id']}/decide", json={"workspace_id": WS})
+        check("j) decide needs approve true or false", r.status_code == 400
+              and card(p1["id"])["status"] == "proposed", r.text)
+        r = await c.post(f"/api/board/{p1['id']}/decide", json={"workspace_id": WS, "approve": True,
+                                                                "reason": "go"})
+        after = (await c.get("/api/board", params={"workspace_id": WS})).json()["proposed"]
+        everywhere = (await c.get("/api/board/proposed")).json()
+        check("j) HTTP decide approves it; counts drop to 1",
+              r.status_code == 200 and r.json()["status"] == "todo" and r.json()["decision_reason"] == "go"
+              and after == {"dir-1": 1} and everywhere == {WS: 1, WS_B: 1}, f"{r.text} {after} {everywhere}")
+
+
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f):
-        await case()
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j):
+        try:
+            res = case()
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception as e:  # noqa: BLE001 — a missing function is a FAIL line, not a traceback
+            check(f"{case.__name__} ran", False, repr(e))
 
 
 try:

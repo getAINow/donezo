@@ -514,7 +514,7 @@ function wsCardHtml(w) {
 }
 
 // Dữ liệu Home của MỌI workspace — refreshNow (shell) nạp, renderHome vẽ.
-let HOME = { sessions: [], signals: [], subtasks: [] };
+let HOME = { sessions: [], signals: [], subtasks: [], proposed: {} };
 
 // Một danh sách cho cả hộp Needs you, badge sidebar và chữ "needs you" trên card: ba chỗ đếm
 // từ ba nguồn là sớm muộn lệch nhau.
@@ -523,6 +523,7 @@ function homeInbox() {
     ...waitingApproval(HOME.signals).map((sg) => ({ ws: sg.workspace_id, sg })),
     ...HOME.subtasks.filter((t) => !t.discarded && (t.status === "failed"
       || (t.rechecking && (t.status === "fixing" || t.status === "verifying")))).map((t) => ({ ws: t.workspace_id, t })),
+    ...Object.entries(HOME.proposed).map(([ws, n]) => ({ ws, n })),
   ];
 }
 
@@ -533,7 +534,12 @@ const nameOf = (ref) => (HOME.sessions.find((x) => x.id === ref || x.name === re
 
 function renderInbox() {
   const items = homeInbox();
-  $("inbox").innerHTML = items.map(({ ws, sg, t }) => {
+  $("inbox").innerHTML = items.map(({ ws, sg, t, n }) => {
+    if (n) return `<div class="inbox-item" data-proposals="${esc(ws)}">${ic("bell")}
+      <div class="inbox-txt"><div class="inbox-t">${n} proposal${n === 1 ? " waits" : "s wait"} for your decision</div>
+        <div class="inbox-d"><span class="inbox-msg">Ideas on the Board that no agent may start until you approve them</span>
+          <span class="inbox-m">· ${esc(wsLabel(ws))}</span></div></div>
+      <div class="inbox-acts"><button class="secondary" onclick="openTeam('${esc(ws)}', 'board')">Open Board</button></div></div>`;
     const meta = `<span class="inbox-m">· ${esc(wsLabel(ws))} · ${ago(sg ? sg.created_at : t.ended_at || t.updated_at)}</span>`;
     if (sg) return `<div class="inbox-item" data-sig="${sg.id}">${ic("bell")}
       <div class="inbox-txt"><div class="inbox-t">Approve a message</div>
@@ -582,11 +588,11 @@ function renderWorking() {
 }
 
 // Pane đọc tab đã lưu lúc boot; pane đang mở sẵn thì nhắn xuống để nó tự đổi tab.
-function openTeam(wid) {
-  try { localStorage.setItem("orch-tab." + wid, "team"); } catch { /* private mode */ }
+function openTeam(wid, tab = "team") {
+  try { localStorage.setItem("orch-tab." + wid, tab); } catch { /* private mode */ }
   selectWorkspace(wid);
   const f = [...$("panes").querySelectorAll("iframe.pane")].find((x) => x.dataset.ws === wid);
-  if (f) f.contentWindow.postMessage({ t: "tab", tab: "team" }, location.origin);
+  if (f) f.contentWindow.postMessage({ t: "tab", tab }, location.origin);
 }
 window.openTeam = openTeam;
 
@@ -4054,10 +4060,11 @@ function refreshAll() {
 async function refreshNow() {
   try {
     // Group chỉ có ở shell — pane không có màn Home nên không tốn một lượt gọi cho nó.
-    const [workspaces, health, groups, homeSessions, homeSignals] = await Promise.all(
+    const [workspaces, health, groups, homeSessions, homeSignals, homeProposed] = await Promise.all(
       [api("/api/workspaces"), api("/health"), PANE ? [] : api("/api/groups"),
        // Home của shell: không lọc workspace = mọi workspace. Chỉ trang đầu 200 signal mới nhất.
-       PANE ? [] : api("/api/sessions"), PANE ? {} : api("/api/signals?limit=200")]);
+       PANE ? [] : api("/api/sessions"), PANE ? {} : api("/api/signals?limit=200"),
+       PANE ? {} : api("/api/board/proposed").catch(() => ({}))]);
     if (!PANE) GROUPS = groups;
     if (health.daily_allow_step) DAILY_STEP = health.daily_allow_step;
     if (health.default_effort) DEFAULT_EFFORT = health.default_effort;
@@ -4081,7 +4088,7 @@ async function refreshNow() {
       const subs = await Promise.all(teamWs.map((w) =>
         api("/api/team?workspace_id=" + encodeURIComponent(w))
           .then((t) => (t.subtasks || []).map((x) => ({ ...x, workspace_id: w }))).catch(() => [])));
-      HOME = { sessions: homeSessions, signals: homeSignals.items || [], subtasks: subs.flat() };
+      HOME = { sessions: homeSessions, signals: homeSignals.items || [], subtasks: subs.flat(), proposed: homeProposed };
       renderWorkspaces(workspaces);
       setConn(true);
       return;   // shell không đụng tới sessions/signals/runs — pane lo phần đó
@@ -4097,12 +4104,14 @@ async function refreshNow() {
     $("hdr-ws").hidden = false;
 
     const q = wsQuery();
-    const [sessions, signals, runs, vsc] = await Promise.all([
+    const [sessions, signals, runs, vsc, bd] = await Promise.all([
       api("/api/sessions" + q),
       api("/api/signals" + pagedQuery(sigShown)),
       api("/api/runs" + pagedQuery(runsShown)),
       api("/api/editor").catch(() => []),
+      api("/api/board" + q).catch(() => ({})),
     ]);
+    bdTabCount(bd.proposed);
     editorCards = Array.isArray(vsc) ? vsc : [];
     // Phiên của đội (sub-agent, verifier, reflect) không phải agent để chat: không terminal trên
     // canvas, không chip trên thanh cửa sổ, không làm đích signal — gom vào tab Team.
@@ -4669,8 +4678,11 @@ window.teamRender = teamRender;
 // ── Board: backlog của một agent ─────────────────────────────────────────────
 // Mỗi agent không phải phiên đội có một board. Board chỉ GIỮ việc; card gắn sub-agent tự đổi cột
 // theo việc đó (board.py). Ở đây chỉ xem, thêm, sửa, chuyển cột và xoá. Id card là số nguyên.
-const BD_COLS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["dropped", "Dropped"]];
-let BOARD = { agents: [], cards: [], open: {} }, bdOwner = "", bdShowDropped = false, bdEdit = 0, bdSeq = 0;
+// Card 'proposed' (ý của planner) chỉ NGƯỜI DÙNG duyệt hay bỏ, qua /decide — không chuyển cột tay.
+const BD_COLS = [["proposed", "Proposed"], ["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"],
+  ["dropped", "Dropped"]];
+let BOARD = { agents: [], cards: [], open: {}, proposed: {} }, bdOwner = "", bdShowDropped = false, bdEdit = 0,
+  bdSeq = 0, bdDecide = null;   // bdDecide: {id, approve} của card đang mở ô lý do
 const boardVisible = () => !$("tab-board").hidden;
 const bdQ = (o) => "?" + new URLSearchParams({ ...(currentWS ? { workspace_id: currentWS } : {}), ...o });
 
@@ -4678,14 +4690,30 @@ async function boardLoad() {
   const my = ++bdSeq;
   const agents = actSessions.filter((s) => !s.team);
   if (!agents.some((s) => s.id === bdOwner)) {
-    // Mặc định: agent còn nhiều card mở nhất, không ai có thì agent đầu tiên.
-    const { open } = await api("/api/board" + bdQ({}));
-    bdOwner = agents.reduce((b, s) => ((open[s.id] || 0) > (open[b.id] || 0) ? s : b), agents[0] || {}).id || "";
+    // Mặc định: agent có nhiều đề xuất chờ nhất, rồi nhiều card mở nhất, không ai có thì agent đầu tiên.
+    const { open, proposed } = await api("/api/board" + bdQ({}));
+    const score = (s) => (proposed[s.id] || 0) * 1e6 + (open[s.id] || 0);
+    bdOwner = agents.reduce((b, s) => (score(s) > score(b) ? s : b), agents[0] || {}).id || "";
   }
-  const r = bdOwner ? await api("/api/board" + bdQ({ owner_id: bdOwner })) : { cards: [], open: {} };
+  const r = bdOwner ? await api("/api/board" + bdQ({ owner_id: bdOwner })) : { cards: [], open: {}, proposed: {} };
   if (my !== bdSeq) return;
-  BOARD = { agents, cards: r.cards, open: r.open };
-  if (!bdEdit) boardRender();          // đang sửa một card: refresh không được xoá chữ đang gõ
+  BOARD = { agents, cards: r.cards, open: r.open, proposed: r.proposed };
+  bdTabCount(r.proposed);
+  if (!bdEdit && !bdDecide) boardRender();   // đang gõ trong card: refresh không được xoá chữ
+}
+
+function bdTabCount(proposed) {
+  const n = Object.values(proposed || {}).reduce((a, b) => a + b, 0);
+  $("board-proposed").hidden = !n;
+  $("board-proposed").textContent = n;
+}
+
+// Chỉ http(s) mới thành link; scheme khác (javascript:, data:…) không bao giờ được render ra href.
+function bdLink(u) {
+  let x;
+  try { x = new URL(u); } catch { return ""; }
+  return /^https?:$/.test(x.protocol) ? `<a class="bd-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer"
+    title="${esc(u)}">${esc(x.hostname)}</a>` : "";
 }
 
 function bdCard(c, who) {
@@ -4696,30 +4724,46 @@ function bdCard(c, who) {
         <button class="st-sec" onclick="boardEditOpen(0)" title="Keep the card as it was">Cancel</button></div></div></div>`;
   const task = c.subtask_id ? `<span class="st-chip mono" title="Linked sub-agent task">${esc(c.subtask_id)}</span>`
     + badge(esc(c.task_status || "removed"), ST_BADGE[c.task_status]) : "";
+  const d = bdDecide && bdDecide.id === c.id ? bdDecide : null;
+  if (d) return `<div class="st-card s-${c.status}" data-card="${c.id}">
+    <div class="st-title">${esc(c.title)}</div>
+    <div class="page-form" style="padding:0">
+      <input id="bd-reason" maxlength="1000" placeholder="Reason (optional)" aria-label="Reason to ${d.approve ? "approve" : "reject"}"
+        onkeydown="if (event.key === 'Enter') boardDecideGo(); if (event.key === 'Escape') boardDecideOpen(0)">
+      <div class="st-acts"><button class="${d.approve ? "attn-ok" : "danger"}" onclick="boardDecideGo()"
+          title="${d.approve ? "Approve: the card moves to To do" : "Reject: the card moves to Dropped"}">${d.approve ? "Approve" : "Reject"}</button>
+        <button class="st-sec" onclick="boardDecideOpen(0)" title="Leave the proposal waiting">Cancel</button></div></div></div>`;
+  const by = c.source === "planner" ? "Proposed by planner" : `Added by ${c.source === "agent" ? esc(who) : "You"}`;
+  const link = c.url ? bdLink(c.url) : "";
   return `<div class="st-card s-${c.status}" data-card="${c.id}">
-    <div class="st-top"><span class="st-who">Added by ${c.source === "agent" ? esc(who) : "You"}</span>${task}</div>
+    <div class="st-top"><span class="st-who">${by}</span>${task}</div>
     <div class="st-title">${esc(c.title)}</div>
     ${c.body ? `<div class="bd-body">${esc(c.body)}</div>` : ""}
-    ${c.note ? `<div class="st-note" title="Last automatic change">${esc(c.note)}</div>` : ""}
-    <div class="st-acts">
+    ${link ? `<div class="st-note">Source: ${link}</div>` : ""}
+    ${c.note ? `<div class="st-note" title="${c.decision ? "Your decision" : "Last automatic change"}">${esc(c.note)}</div>` : ""}
+    <div class="st-acts">${c.status === "proposed" ? `
+      <button class="attn-ok" onclick="boardDecideOpen(${c.id}, true)" title="Approve: the card moves to To do">Approve</button>
+      <button class="secondary" onclick="boardDecideOpen(${c.id}, false)" title="Reject: the card moves to Dropped">Reject</button>` : `
       <select class="mini" aria-label="Move to" title="Move to another column" onchange="boardMove(${c.id}, this.value)">${
-        BD_COLS.map(([k, l]) => `<option value="${k}"${k === c.status ? " selected" : ""}>${l}</option>`).join("")}</select>
+        BD_COLS.slice(1).map(([k, l]) => `<option value="${k}"${k === c.status ? " selected" : ""}>${l}</option>`).join("")}</select>`}
       <button class="st-sec" onclick="boardEditOpen(${c.id})" title="Edit the title and details" aria-label="Edit">${ic("edit", "sm")}</button>
       <button class="st-sec" onclick="boardDelete(${c.id})" title="Delete this card" aria-label="Delete">${ic("trash", "sm")}</button>
     </div></div>`;
 }
 
 function boardRender() {
-  const { agents, cards, open } = BOARD;
+  const { agents, cards, open, proposed } = BOARD;
   const who = agents.find((s) => s.id === bdOwner);
   $("bd-agent").innerHTML = agents.map((s) => `<option value="${esc(s.id)}"${s.id === bdOwner ? " selected" : ""}>${
-    esc(s.name)}${open[s.id] ? ` · ${open[s.id]} open` : ""}</option>`).join("");
+    esc(s.name)}${proposed[s.id] ? ` · ${proposed[s.id]} proposed` : ""}${open[s.id] ? ` · ${open[s.id]} open` : ""}</option>`).join("");
   $("bd-add").hidden = !who;
   $("bd-empty").hidden = !!cards.length;
   $("bd-empty").textContent = who ? `${who.name} has no cards yet. Add work here, or ask the agent to keep `
     + "a backlog: it adds cards with board_add." : "No agents in this workspace yet.";
   $("bd-cols").hidden = !cards.length;
-  $("bd-cols").innerHTML = BD_COLS.map(([k, label]) => {
+  const hasProposed = cards.some((c) => c.status === "proposed");
+  $("bd-cols").classList.toggle("bd-five", hasProposed);
+  $("bd-cols").innerHTML = BD_COLS.filter(([k]) => k !== "proposed" || hasProposed).map(([k, label]) => {
     const list = cards.filter((c) => c.status === k);
     const fold = k === "dropped" && !bdShowDropped && list.length;
     const toggle = k === "dropped" && list.length ? `<button class="secondary" onclick="boardFold()" aria-expanded="${!fold}"
@@ -4749,7 +4793,18 @@ async function boardAdd(e) {
     $("bd-msg").textContent = "";
   }
 }
-function boardPick(id) { bdOwner = id; bdEdit = 0; boardLoad().catch((e) => console.error(e)); }
+function boardPick(id) { bdOwner = id; bdEdit = 0; bdDecide = null; boardLoad().catch((e) => console.error(e)); }
+function boardDecideOpen(id, approve) {
+  bdDecide = id ? { id, approve } : null;
+  boardRender();
+  if (id) $("bd-reason").focus();
+}
+function boardDecideGo() {
+  const { id, approve } = bdDecide;
+  const reason = $("bd-reason").value.trim();
+  bdDecide = null;
+  boardDo(`/api/board/${id}/decide` + bdQ({}), "POST", { approve, reason });
+}
 function boardFold() { bdShowDropped = !bdShowDropped; boardRender(); }
 function boardMove(id, status) { boardDo(`/api/board/${id}` + bdQ({}), "POST", { status }); }
 function boardEditOpen(id) {
@@ -4769,7 +4824,7 @@ function boardDelete(id) {
 }
 window.boardAdd = boardAdd; window.boardPick = boardPick; window.boardFold = boardFold;
 window.boardMove = boardMove; window.boardEditOpen = boardEditOpen; window.boardSave = boardSave;
-window.boardDelete = boardDelete;
+window.boardDelete = boardDelete; window.boardDecideOpen = boardDecideOpen; window.boardDecideGo = boardDecideGo;
 
 // ── Live updates (SSE) ───────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ Like team.py, this module never imports session_orchestrator at module level.
 
 import team
 
-STATUSES = ("todo", "in_progress", "done", "dropped")
+STATUSES = ("proposed", "todo", "in_progress", "done", "dropped")
 FINAL = ("done", "dropped")      # set by hand, these win over any later automatic change
 NOTE_MAX = 200
 
@@ -23,7 +23,7 @@ def migrate(conn):
             title TEXT NOT NULL,
             body TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'todo',      -- one of STATUSES
-            source TEXT NOT NULL DEFAULT 'user',      -- user | agent
+            source TEXT NOT NULL DEFAULT 'user',      -- user | agent | planner
             subtask_id TEXT NOT NULL DEFAULT '',      -- the sub-agent task working on it
             note TEXT NOT NULL DEFAULT '',            -- one line about the last automatic change
             created_at TEXT NOT NULL,
@@ -32,6 +32,10 @@ def migrate(conn):
         CREATE INDEX IF NOT EXISTS idx_board_cards_owner ON board_cards(workspace_id, owner_id);
         CREATE INDEX IF NOT EXISTS idx_board_cards_task ON board_cards(subtask_id);
     """)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(board_cards)")}
+    for col in ("url", "decision", "decision_reason"):    # planner proposals
+        if col not in cols:
+            conn.execute(f"ALTER TABLE board_cards ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
 
 def _publish(card):
@@ -62,6 +66,14 @@ def open_counts(ws):
         "AND status IN ('todo', 'in_progress') GROUP BY owner_id", (ws,))}
 
 
+def proposed_counts(ws=""):
+    """Waiting proposals of live agents: {owner_id: n} in ws, or {workspace_id: n} with no ws."""
+    key = "c.owner_id" if ws else "c.workspace_id"
+    return {r["k"]: r["n"] for r in team._rows(
+        f"SELECT {key} k, COUNT(*) n FROM board_cards c JOIN sessions s ON s.id = c.owner_id "
+        "WHERE c.status = 'proposed' AND (? = '' OR c.workspace_id = ?) GROUP BY k", (ws, ws))}
+
+
 def add(ws, owner_id, title, body="", source="user"):
     so = team._so()
     owner = so.get_session(owner_id)
@@ -81,6 +93,39 @@ def add(ws, owner_id, title, body="", source="user"):
     return card
 
 
+def propose(ws, owner_id, title, body="", url=""):
+    """A planner's idea: a card in 'proposed' that waits for the user's decision."""
+    url = str(url or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        return {"error": "url must start with http:// or https://"}
+    card = add(ws, owner_id, title, body, source="planner")
+    if card.get("error"):
+        return card
+    team._exec("UPDATE board_cards SET status = 'proposed', url = ? WHERE id = ?", (url[:500], card["id"]))
+    card = get(ws, card["id"])
+    _publish(card)
+    return card
+
+
+def decide(ws, card_id, approve, reason=""):
+    """The user's answer to a proposal: approved → todo, rejected → dropped. Only the HTTP route
+    calls this; no MCP tool does, so no agent can approve its own idea."""
+    card = get(ws, card_id)
+    if not card:
+        return {"error": "not found"}
+    if card["status"] != "proposed":
+        return {"error": f"card {card['id']} is {card['status']}, not a proposal"}
+    reason = " ".join(str(reason or "").split())[:1000]
+    verdict = "approved" if approve else "rejected"
+    team._exec("UPDATE board_cards SET status = ?, decision = ?, decision_reason = ?, note = ?, updated_at = ? "
+               "WHERE id = ?", ("todo" if approve else "dropped", verdict, reason,
+                                (f"{verdict}: {reason}" if reason else verdict)[:NOTE_MAX], team._so()._now(),
+                                card["id"]))
+    card = get(ws, card["id"])
+    _publish(card)
+    return card
+
+
 def update(ws, card_id, owner_id="", status=None, title=None, body=None, note=None, subtask_id=None):
     """owner_id set = only that agent's card. None/'' leaves a field as it is (body: None only)."""
     card = get(ws, card_id)
@@ -90,6 +135,8 @@ def update(ws, card_id, owner_id="", status=None, title=None, body=None, note=No
     if status:
         if status not in STATUSES:
             return {"error": f"status must be one of: {', '.join(STATUSES)}"}
+        if "proposed" in (status, card["status"]):
+            return {"error": "only the user approves or rejects a proposal"}
         fields["status"] = status
     if title is not None and str(title).strip():
         fields["title"] = str(title).strip()[:200]
@@ -123,6 +170,8 @@ def check_link(ws, card_id, director_id):
     card = get(ws, card_id)
     if not card or card["owner_id"] != director_id:
         return f"card {card_id} is not on your board"
+    if card["status"] == "proposed":
+        return f"card {card_id} is a proposal waiting for the user's decision"
     if card["status"] in FINAL:
         return f"card {card_id} is {card['status']}: move it back to todo first"
     return ""
@@ -166,7 +215,17 @@ def routes(body, reply, ws_of):
         ws, q = ws_of(request), request.query_params
         return JSONResponse({"cards": await asyncio.to_thread(list_cards, ws, q.get("owner_id", ""),
                                                               q.get("status", "")),
-                             "open": await asyncio.to_thread(open_counts, ws)})
+                             "open": await asyncio.to_thread(open_counts, ws),
+                             "proposed": await asyncio.to_thread(proposed_counts, ws)})
+
+    async def api_proposed(request):
+        return JSONResponse(await asyncio.to_thread(proposed_counts))
+
+    async def api_decide(request):
+        b = await body(request)
+        if not isinstance(b.get("approve"), bool):
+            return reply({"error": "approve must be true or false"})
+        return reply(decide(ws_of(request, b), request.path_params["cid"], b["approve"], b.get("reason", "")))
 
     async def api_add(request):
         b = await body(request)
@@ -183,4 +242,6 @@ def routes(body, reply, ws_of):
 
     return [Route("/api/board", api_list),
             Route("/api/board", api_add, methods=["POST"]),
-            Route("/api/board/{cid:int}", api_card, methods=["POST", "DELETE"])]
+            Route("/api/board/proposed", api_proposed),
+            Route("/api/board/{cid:int}", api_card, methods=["POST", "DELETE"]),
+            Route("/api/board/{cid:int}/decide", api_decide, methods=["POST"])]

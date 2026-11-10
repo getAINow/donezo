@@ -402,15 +402,17 @@ def _board_owner(from_role: str, workspace_id: str = ""):
 
 @mcp.tool()
 async def board_list(from_role: str, status: str = "", workspace_id: str = ""):
-    """Your board: the backlog of work you hold (todo, in_progress, done, dropped), newest first.
-    Read it when asked what is next."""
+    """Your board: the backlog of work you hold (proposed, todo, in_progress, done, dropped), newest
+    first. Read it when asked what is next. A proposal waits for the user's decision (decision,
+    decision_reason) and cannot be started until the user approves it."""
     board, ws, me, err = _board_owner(from_role, workspace_id)
     if err:
         return err
     if status and status not in board.STATUSES:
         return f"⛔ status must be one of: {', '.join(board.STATUSES)}"
     rows = [{k: c[k] for k in ("id", "title", "body", "status", "source", "subtask_id", "task_status",
-                               "note")} for c in board.list_cards(ws, me["id"], status)]
+                               "note", "url", "decision", "decision_reason")}
+            for c in board.list_cards(ws, me["id"], status)]
     return json.dumps(rows, ensure_ascii=False) if rows else "Your board is empty."
 
 
@@ -429,7 +431,8 @@ async def board_add(from_role: str, title: str, body: str = "", workspace_id: st
 async def board_update(from_role: str, card_id: int, status: str = "", title: str = "", body: str = "",
                        workspace_id: str = ""):
     """Change one of your cards. Empty arguments stay as they are. status: todo | in_progress |
-    done | dropped (done and dropped are not undone by the linked sub-agent's progress)."""
+    done | dropped (done and dropped are not undone by the linked sub-agent's progress). A
+    proposed card's status is not yours to change: only the user approves or rejects it."""
     board, ws, me, err = _board_owner(from_role, workspace_id)
     if err:
         return err

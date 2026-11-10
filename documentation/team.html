@@ -141,7 +141,7 @@ Scrolling loads more, 10 at a time.</p>
 
 <h2 id="board">The Board tab</h2>
 <p>Every agent you made (not its sub-agents) has a board: the backlog of work it holds. Pick the agent at the top;
-it opens on the one with the most open cards. Cards sit in four columns: <span class="ui">To do</span>,
+it opens on the one with the most proposals waiting, otherwise the most open cards. Cards sit in four columns: <span class="ui">To do</span>,
 <span class="ui">In progress</span>, <span class="ui">Done</span> and <span class="ui">Dropped</span> (folded until you
 click <span class="ui">Show</span>).</p>
 <ul>
@@ -154,6 +154,19 @@ click <span class="ui">Show</span>).</p>
     stays there.</li>
 </ul>
 <p>The board only holds work; sub-agents still do it. Cards stay when their agent is unregistered.</p>
+<h3 id="proposals">Proposals</h3>
+<p>A proposal is an idea the planner found while researching, with a link to where it found it. It waits in a
+<span class="ui">Proposed</span> column, first on the board, until you decide. Only you decide: no agent can approve or
+start a proposal, not even the agent whose board it is on.</p>
+<ul>
+  <li><span class="ui">Approve</span> moves the card to To do, where it is ordinary work again.
+    <span class="ui">Reject</span> moves it to Dropped. Either one first asks for an optional reason.</li>
+  <li>The reason is kept on the card and shown in its note, for example <em>approved: users keep asking</em>. The agent
+    reads it with <code>board_list</code>.</li>
+  <li>The link shows the site's name and opens in a new tab.</li>
+  <li>The number on the <span class="ui">Board</span> tab counts the proposals waiting in that workspace. Home lists each
+    workspace that has some under <span class="ui">Needs you</span>; <span class="ui">Open Board</span> takes you there.</li>
+</ul>
 
 <h2 id="decisions">Decision log</h2>
 <p><span class="ui">Why the director chose this</span> is a list, newest first, of the decisions the director and
