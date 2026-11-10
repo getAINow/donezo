@@ -4676,11 +4676,12 @@ _ESC_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)?", re.S)
 _bg_tasks: set = set()
 
 
-def terminal_writer(term):
+def terminal_writer(term, hooks):
     """Mục sổ của một terminal vừa mở. busy=True tới hook đầu tiên (SessionStart): CLI chưa vẽ xong
-    ô nhập thì chữ gõ vào là mất; CLI không có hook (agy) thì không bao giờ rảnh → signal chờ nó đóng."""
-    return {"kind": "terminal", "term": term, "busy": True, "draft": 0, "typed": 0.0,
-            "compact": False, "sig": None, "run": None, "started": False}
+    ô nhập thì chữ gõ vào là mất. hooks=False (agy, claude không lắp được --settings): không bao giờ
+    biết lúc rảnh, nên signal tới là server đóng terminal và chạy nền (_process_signal_locked)."""
+    return {"kind": "terminal", "term": term, "hooks": hooks, "busy": True, "draft": 0, "typed": 0.0,
+            "compact": False, "sig": None, "run": None, "started": False, "evicted": False}
 
 
 def note_terminal_input(w, data):
@@ -4856,7 +4857,14 @@ async def _process_signal_locked(signal):
 
             dry = bool(signal.get("dry_run"))
             w = _WRITERS.get(target["id"])
-            if w and not (dry or DRY_RUN):
+            if w and not (dry or DRY_RUN) and not w["hooks"]:
+                # Terminal không báo lượt: chờ nó rảnh là chờ mãi. Như khoá cũ của trình duyệt, nhưng ở
+                # server: đóng nó (card nhận 4409, tự mở lại khi run xong) rồi chạy nền. Không await
+                # giữa lúc gỡ sổ và lúc run giữ sổ bên dưới → terminal mới không chen vào được.
+                del _WRITERS[target["id"]]
+                w["evicted"] = True
+                w["term"].close()
+            elif w and not (dry or DRY_RUN):
                 # Terminal đang mở = nó là người ghi. Gõ vào lúc rảnh, từng cái theo thứ tự id.
                 if _terminal_free(w) and queued_signals(target["id"])[:1] == [signal["id"]]:
                     await _type_into_terminal(w, target, signal, wsid)
@@ -5897,8 +5905,8 @@ def build_app():
         loop = asyncio.get_running_loop()
         _PTYS[term.pid] = {"session": sid, "kind": kind}
         # Chỉ terminal mở ĐÚNG hội thoại của card mới là người ghi; phiên mới (CLI khác engine) thì không.
-        w = terminal_writer(term) if kind == "terminal" and any(
-            x in argv for x in (sid, s.get("resume_id")) if x) else None
+        w = terminal_writer(term, argv[0] == CLAUDE_BIN and "--settings" in argv) \
+            if kind == "terminal" and any(x in argv for x in (sid, s.get("resume_id")) if x) else None
         if w:
             _WRITERS[sid] = w
 
@@ -5908,6 +5916,9 @@ def build_app():
                 if not data:
                     break
                 await websocket.send_bytes(data)
+            if w and w["evicted"]:
+                await websocket.close(code=4409, reason="Agent is working")
+                return
             await websocket.close(code=4001 if on_exit and await on_exit(sid, term.pid) else 1000)
 
         out_task = asyncio.create_task(pump_out())

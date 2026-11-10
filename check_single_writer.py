@@ -9,6 +9,7 @@ is what the cases below judge. team.after_run is wrapped by the launcher to log 
 
     python check_single_writer.py                 # this branch's server
     SW_CODE=/tmp/master python check_single_writer.py   # someone else's (e.g. master's) server
+    SW_KEEP=1 python check_single_writer.py             # keep the temp dir (server.log, writers.jsonl)
 
 Throwaway HOME, DB, Claude config and a free port; never 8992, never a real claude.
 """
@@ -42,11 +43,13 @@ FAKE = TMP / "fake_claude.py"
 for d in ("tmux", "claude-config", "work"):
     (TMP / d).mkdir()
 BIN = TMP / ("fake_claude.cmd" if NT else "fake_claude")
+AGY = TMP / ("fake_agy.cmd" if NT else "fake_agy")      # same script; its own path so it is not CLAUDE_BIN
 ENV = {"HOME": str(TMP), "USERPROFILE": str(TMP), "ORCH_PORT": str(PORT), "ORCH_HOST": "127.0.0.1",
        "ORCH_DB": "check_single_writer", "ORCH_DRY_RUN": "0", "ORCH_POLL_INTERVAL": "1",
        "ORCH_TYPING_QUIET": "1.5", "ORCH_WORKSPACES_ROOT": str(TMP / "ws"),
        "TMUX_TMPDIR": str(TMP / "tmux"), "CLAUDE_CONFIG_DIR": str(TMP / "claude-config"),
-       "CLAUDE_BIN": str(BIN), "AGY_BIN": str(TMP / "no-agy"), "FAKE_LOG": str(LOG)}
+       "CLAUDE_BIN": str(BIN), "ORCH_AGY_BIN": str(AGY), "ORCH_AGY_HOME": str(TMP / "agy"),
+       "FAKE_LOG": str(LOG)}
 os.environ.update(ENV)
 sys.path.insert(0, str(CODE))
 
@@ -59,7 +62,7 @@ so._ensure_db()
 FAKE.write_text(r'''import codecs, json, os, re, signal, subprocess, sys, time
 LOG = os.environ["FAKE_LOG"]
 args = sys.argv[1:]
-sid = next((args[i + 1] for i, a in enumerate(args[:-1]) if a in ("--resume", "--session-id")), "")
+sid = next((args[i + 1] for i, a in enumerate(args[:-1]) if a in ("--resume", "--session-id", "--conversation")), "")
 
 
 def log(**kw):
@@ -83,6 +86,14 @@ if "-p" in args:                                   # background run, stream-json
                {"type": "result", "subtype": "success", "is_error": False, "result": "bg reply",
                 "num_turns": 1, "session_id": sid, "usage": {"output_tokens": 1}}):
         print(json.dumps(ev), flush=True)
+    sys.exit(0)
+
+if any(a.startswith("--prompt=") for a in args):   # background run of agy (stream of NDJSON events)
+    prompt = next(a for a in args if a.startswith("--prompt="))[9:]
+    log(who="run", ev="start", prompt=prompt)
+    time.sleep(secs(prompt))
+    log(who="run", ev="end")
+    print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "agy reply"}}), flush=True)
     sys.exit(0)
 
 import tty
@@ -155,11 +166,12 @@ while True:
             elif ch >= " ":
                 buf += ch
 ''', encoding="utf-8")
-if NT:
-    BIN.write_text(f'@"{sys.executable}" "{FAKE}" %*\r\n', encoding="utf-8")
-else:
-    BIN.write_text(f"#!{sys.executable}\n" + FAKE.read_text(encoding="utf-8"), encoding="utf-8")
-    os.chmod(BIN, 0o755)
+for b in (BIN, AGY):
+    if NT:
+        b.write_text(f'@"{sys.executable}" "{FAKE}" %*\r\n', encoding="utf-8")
+    else:
+        b.write_text(f"#!{sys.executable}\n" + FAKE.read_text(encoding="utf-8"), encoding="utf-8")
+        os.chmod(b, 0o755)
 
 # The launcher wraps team.after_run so the check sees what the team flow is handed.
 LAUNCH = TMP / "launch.py"
@@ -179,9 +191,12 @@ so.main()
 ''', encoding="utf-8")
 
 WS = so.DEFAULT_WORKSPACE
-CARDS = ["sw-one", "sw-two", "sw-three", "sw-five", "sw-six", "sw-seven"]
+CARDS = ["sw-one", "sw-two", "sw-three", "sw-five", "sw-six", "sw-seven", "sw-agy"]
 for c in CARDS:
-    so.register_session(c, c, cwd=str(TMP / "work"), model="", workspace_id=WS)
+    so.register_session(c, c, cwd=str(TMP / "work"), model="agy" if c == "sw-agy" else "",
+                        workspace_id=WS)
+so.AGY_CONVERSATIONS_DIR.mkdir(parents=True)
+(so.AGY_CONVERSATIONS_DIR / "sw-agy.db").touch()    # agy has this conversation → the terminal resumes it
 
 results = {}   # case → list of failures
 
@@ -230,6 +245,7 @@ class Term:
 
     async def open(self, card, retry=False):
         import websockets
+        self.deadline = time.monotonic() + 20
         while True:
             self.ws = await websockets.connect(f"ws://127.0.0.1:{PORT}/ws/terminal?session={card}")
             self.code = None
@@ -239,7 +255,7 @@ class Term:
                 pass
             except websockets.ConnectionClosed as e:
                 self.code, self.reason = e.rcvd.code if e.rcvd else None, e.rcvd.reason if e.rcvd else ""
-            if self.code is None or not retry:
+            if self.code is None or not retry or time.monotonic() > self.deadline:
                 break
             await asyncio.sleep(0.5)                # what the card does on 4409: wait, reconnect
         if self.code is None:
@@ -395,6 +411,29 @@ async def main():
          len(runs) == 2 and "case seven queued" in runs[1]["prompt"]
          and runs[1]["t"] >= events(session="sw-seven", ev="exit")[0]["t"], runs)
 
+    # 8 · a terminal with no turn hooks (agy) never holds signals: the server closes it, runs, reopens
+    t = await Term().open("sw-agy")
+    await until(lambda: events(session="sw-agy", ev="ready"))
+    s8 = send("sw-agy", "case eight for agy work=2")
+    await until(lambda: sig_status(s8) == "done", 25)
+    try:
+        await asyncio.wait_for(t.drain, 5)
+    except asyncio.TimeoutError:
+        pass
+    closed = t.ws.close_code, t.ws.close_reason
+    run = events(session="sw-agy", who="run", ev="start")
+    case(8, "the signal ran in the background, after_run got its result",
+         run and "case eight" in run[0]["prompt"]
+         and any(e["result"] == "agy reply" for e in events(who="after_run", signal=s8)), run)
+    case(8, "the server closed the terminal with 4409 before the run started",
+         closed == (4409, "Agent is working") and events(session="sw-agy", ev="exit")
+         and events(session="sw-agy", ev="exit")[0]["t"] <= run[0]["t"], closed)
+    t = await Term().open("sw-agy", retry=True)
+    await until(lambda: len(events(session="sw-agy", ev="open")) == 2)
+    case(8, "the card's reconnect opens the terminal again after the run",
+         t.code is None and len(events(session="sw-agy", ev="open")) == 2, events(session="sw-agy", ev="open"))
+    await t.close()
+
     # 4 · across every case above, no two writers of one card ever overlapped
     for c in CARDS:
         bad = overlaps(c)
@@ -417,8 +456,9 @@ def hooks_through_shells():
              r.returncode == 0 and not r.stdout.strip(), (r.returncode, r.stdout[:200]))
 
 
+SERVER_LOG = TMP / "server.log"    # a file, not a pipe nobody reads: a full pipe stalls the server
 proc = subprocess.Popen([sys.executable, str(LAUNCH)], cwd=str(CODE), env={**os.environ, **ENV},
-                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        stdout=SERVER_LOG.open("wb"), stderr=subprocess.STDOUT)
 try:
     for _ in range(120):
         try:
@@ -427,11 +467,11 @@ try:
         except httpx.HTTPError:
             time.sleep(0.25)
     else:
-        raise AssertionError("server never came up: " + proc.stderr.read1().decode("utf-8", "replace"))
+        raise AssertionError("server never came up: " + SERVER_LOG.read_text(encoding="utf-8", errors="replace"))
     hooks_through_shells()
     if NT:
         # The fake reads raw keys with tty.setraw; ConPTY turns input into console events instead.
-        print("SKIP cases 1-7 on Windows: the fake CLI needs a POSIX raw tty "
+        print("SKIP cases 1-8 on Windows: the fake CLI needs a POSIX raw tty "
               "(the hook command above still ran through cmd and PowerShell)")
     else:
         asyncio.run(main())
@@ -439,7 +479,13 @@ finally:
     proc.kill()
     proc.wait()
 
-shutil.rmtree(TMP, ignore_errors=True)
+if any(results.values()):
+    print("\n[server log tail]\n" + "\n".join(
+        SERVER_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]))
+if os.environ.get("SW_KEEP"):     # keep the log + DB to read after a failure
+    print("kept", TMP)
+else:
+    shutil.rmtree(TMP, ignore_errors=True)
 print()
 for n in sorted(results):
     label = "hooks" if n == 0 else f"case {n}"
