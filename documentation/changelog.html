@@ -73,6 +73,12 @@
     <li>A message for an agent whose terminal is open is now typed into that terminal once its turn ends and you stop typing, instead of closing the terminal. The card shows how many messages are waiting.</li>
     <li>Opening a terminal while a background run is going waits and opens by itself when the run ends. There is no more reload-after-an-automatic-run step.</li>
     <li>The model picker offers Claude Fable 5.2 in place of Fable 5.1. It needs claude CLI 2.1.321 or later. The <code>fable</code> alias already follows the newest Fable.</li>
+    <li>Sub-agents and verifiers always run Claude Opus 5.5. The director picks an effort per task (low to xhigh), and each failed verification raises that task's effort one level. A playbook that often needs a step-up starts one level higher. The Team tab shows the effort of each task.</li>
+  </ul>
+
+  <h3>Removed</h3>
+  <ul>
+    <li>The per-role model pickers on the Team tab. Sub-agents no longer run on Antigravity.</li>
   </ul>
 
   <h3>Fixed</h3>
