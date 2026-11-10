@@ -35,6 +35,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -172,7 +173,9 @@ def migrate(conn):
                      ("max_attempts", "INTEGER NOT NULL DEFAULT 0"),
                      ("rechecking", "INTEGER NOT NULL DEFAULT 0"),
                      # effort_start: mức lúc giao; effort: mức hiện tại (nâng sau mỗi FAIL)
-                     ("effort_start", "TEXT NOT NULL DEFAULT ''"), ("effort", "TEXT NOT NULL DEFAULT ''")):
+                     ("effort_start", "TEXT NOT NULL DEFAULT ''"), ("effort", "TEXT NOT NULL DEFAULT ''"),
+                     # cleaned: sweep_merged gỡ worktree + nhánh vì đã merge (discarded = người dùng bỏ)
+                     ("cleaned", "INTEGER NOT NULL DEFAULT 0")):
         if col not in tcols:
             conn.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {ddl}")
     scols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
@@ -387,15 +390,18 @@ def restore(worktree, sha):
     _git(["clean", "-q", "-fd"], worktree)
 
 
+CLEANED_NOTE = "merged · cleaned up"
+
+
 def diff_stat(st):
-    if not (st.get("worktree") and st.get("base_sha")):
+    if not (st.get("worktree") and st.get("base_sha")) or st.get("cleaned"):
         return ""
     rc, out = _git(["diff", "--stat", f"{st['base_sha']}..HEAD"], st["worktree"])
     return out.strip() if rc == 0 else ""
 
 
 def diff_text(st):
-    if not (st.get("worktree") and st.get("base_sha")) or st.get("discarded"):
+    if not (st.get("worktree") and st.get("base_sha")) or st.get("discarded") or st.get("cleaned"):
         return ""
     rc, out = _git(["diff", f"{st['base_sha']}..{st.get('head_sha') or 'HEAD'}"], st["worktree"])
     return out[:DIFF_MAX] if rc == 0 else ""
@@ -409,6 +415,76 @@ def remove_worktree(st, delete_branch=True):
         _git(["worktree", "prune"], repo)
         if delete_branch and st.get("branch"):
             _git(["branch", "-D", st["branch"]], repo)
+
+
+def _merged(st):
+    """Đỉnh nhánh của st nằm trong một nhánh local KHÔNG phải orch/* của CHÍNH repo nó.
+    shortcut: chỉ thấy merge giữ commit (--no-ff / fast-forward); squash merge không nhận ra nên
+    worktree ở lại — muốn bắt thì so patch-id (git cherry) với nhánh đích."""
+    rc, tip = _git(["rev-parse", "--verify", "-q", f"refs/heads/{st['branch']}^{{commit}}"],
+                   st["repo"]) if st["branch"] else (1, "")
+    tip = tip.strip() if rc == 0 else st["head_sha"]
+    if not tip or tip == st["base_sha"]:
+        return False          # không có commit nào của riêng nó: chưa có gì để merge (vd đã failed)
+    rc, out = _git(["branch", "--format=%(refname:short)", "--contains", tip], st["repo"])
+    return rc == 0 and any(b and not b.startswith("orch/") for b in out.splitlines())
+
+
+def _sweepable(st):
+    """Còn worktree hoặc nhánh, sạch, và đã merge. Lỗi git / repo mất → False (để nguyên)."""
+    repo, wt = st["repo"], st["worktree"]
+    if not repo or not Path(repo).is_dir():
+        return False
+    has_wt = bool(wt) and Path(wt).exists()
+    has_br = bool(st["branch"]) and _git(["rev-parse", "--verify", "-q", f"refs/heads/{st['branch']}"],
+                                         repo)[0] == 0
+    if not (has_wt or has_br):
+        return False
+    if has_wt:
+        # porcelain không liệt kê file bị ignore (.env, ghi chú…): chúng bị xoá cùng worktree.
+        rc, out = _git(["status", "--porcelain"], wt)
+        if rc != 0 or out.strip():
+            return False
+    return _merged(st)
+
+
+_sweep_lock = threading.Lock()
+
+
+def sweep_merged():
+    """Dọn worktree + nhánh của sub-agent đã xong mà việc đã được merge. Không bao giờ đụng thư
+    mục nào trong worktrees/ mà không có dòng subtask trỏ tới. Trả id đã dọn."""
+    if not _sweep_lock.acquire(blocking=False):
+        return []                                 # một lượt quét khác đang chạy
+    done = []
+    try:
+        q = ",".join("?" * len(ACTIVE))
+        # worktree != '': remove_worktree cần nó; make_worktree luôn ghi cả worktree lẫn branch.
+        for st in _rows(f"SELECT * FROM subtasks WHERE cleaned = 0 AND discarded = 0 AND repo != '' "
+                        f"AND worktree != '' AND status NOT IN ({q})", ACTIVE):
+            if not _sweepable(st):
+                continue
+            # Trạng thái có thể đã đổi trong lúc chạy git (vd Verify again): chỉ dọn nếu vẫn đã xong.
+            if _update(st["id"], _from=(st["status"],), cleaned=1) is None:
+                continue
+            remove_worktree(st, delete_branch=True)
+            print(f"[team] cleaned up {st['id']}: {st['branch']} is merged, removed {st['worktree']}",
+                  flush=True)
+            done.append(st["id"])
+    except Exception as e:  # noqa: BLE001 — quét nền không được giết loop gọi nó
+        print(f"[team] sweep error: {e!r}", flush=True)
+    finally:
+        _sweep_lock.release()
+    return done
+
+
+def sweep_soon():
+    """Quét nền, git chạy ngoài event loop. Không có loop (gọi từ thread) → bỏ, lượt định kỳ bắt."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _spawn_bg(asyncio.to_thread(sweep_merged))
 
 
 def _drop_skill(cwd, name):
@@ -863,6 +939,7 @@ def _finish(st):
     if not st["worktree"] and st["kind"] in ("subagent", "reflect"):
         s = so.get_session(st["session_id"]) or {}
         _drop_skill(s.get("cwd"), s.get("name"))
+    sweep_soon()     # việc này vừa xong; nhánh nào director đã merge trước đó thì dọn luôn
 
 
 # ─── Công cụ của agent (signal MCP gọi vào) ──────────────────────────────────
@@ -1070,8 +1147,8 @@ async def reverify(st_id):
         return {"error": "not found"}
     if st["status"] not in ("failed", "passed") or st["kind"] == "reflect" or not st["session_id"]:
         return {"error": "only a finished subtask can be verified again"}
-    if st["discarded"]:
-        return {"error": "its worktree was discarded"}
+    if st["discarded"] or st["cleaned"]:
+        return {"error": "its worktree was discarded" if st["discarded"] else "it was merged and cleaned up"}
     # Một lần kiểm thêm: hạn mức = số lần đã trượt + 1, số lần trượt THẬT giữ nguyên trong thông báo.
     # Chuyển trạng thái NGAY (có _from) để bấm hai lần không đẻ hai verifier.
     if _update(st_id, _from=("failed", "passed"), status="fixing", ended_at="", reason="",
@@ -1091,6 +1168,8 @@ def discard(st_id):
         return {"error": "not found"}
     if st["status"] in ACTIVE:
         return {"error": "cancel it first"}
+    if st["cleaned"]:
+        return {"ok": True}                       # đã merge và dọn: không còn gì để bỏ
     remove_worktree(st, delete_branch=True)
     _update(st_id, discarded=1)
     return {"ok": True}
@@ -1414,7 +1493,7 @@ def _items(subs, sessions):
             **{k: st[k] for k in ("id", "director_id", "session_id", "verifier_id", "kind",
                                   "playbook", "title", "brief", "done_when", "model", "effort_start", "effort", "status",
                                   "attempts", "branch", "worktree", "head_sha", "base_sha", "reason",
-                                  "report", "target", "discarded", "rechecking", "created_at",
+                                  "report", "target", "discarded", "cleaned", "rechecking", "created_at",
                                   "updated_at", "ended_at")},
             "verdict": v, "session_name": (sessions.get(st["session_id"]) or {}).get("name", ""),
             "verifier_name": (sessions.get(st["verifier_id"]) or {}).get("name", ""),
@@ -1614,7 +1693,8 @@ def routes():
         if not st:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse({"stat": await asyncio.to_thread(diff_stat, st),
-                             "diff": await asyncio.to_thread(diff_text, st)})
+                             "diff": await asyncio.to_thread(diff_text, st),
+                             **({"note": CLEANED_NOTE} if st["cleaned"] else {})})
 
     async def api_edges(request: Request):
         b = await body(request)

@@ -4411,7 +4411,7 @@ const stLines = (t, k) => String(t || "").split("\n").map((l) => l.trim()).filte
 function stCard(s, i, sc = "t") {
   const v = s.verdict || {};
   const live = ST_ACTIVE.includes(s.status);
-  const gone = s.discarded || s.status === "cancelled";
+  const gone = s.discarded || s.cleaned || s.status === "cancelled";
   const stages = stStages(s);
   const lastLine = s.last ? `${EV_ICON[s.last.kind] || "·"} <span class="s" title="${esc(s.last.summary)}">${esc(s.last.summary)}</span>`
     : `<span class="s">${live ? "starting…" : esc(s.reason || (s.status === "passed" ? "verified" : s.status))}</span>`;
@@ -4424,9 +4424,10 @@ function stCard(s, i, sc = "t") {
     : s.status === "failed" ? `${s.attempts} of ${s.max_attempts} attempts used`
     : s.status === "passed" ? `Passed on attempt ${s.attempts + 1}` : "";
   const btn = (cls, fn, label, tip) => `<button class="${cls}" onclick="${fn}"${tip ? ` title="${tip}"` : ""}>${label}</button>`;
-  const canDiff = s.branch && !s.discarded;
+  const canDiff = s.branch && !s.discarded && !s.cleaned;
   const canReverify = !live && s.kind !== "reflect" && !gone;
   const primary = live ? btn("danger", `teamCancel(${i}, '${sc}')`, "Cancel")
+    : s.cleaned ? `<span class="st-br" title="Its branch was merged, so the worktree and branch were removed">merged · cleaned up</span>`
     : s.status === "passed" && canDiff ? btn("secondary", `teamDiff(${i}, '${sc}')`, "Diff")
     : s.status === "failed" && canReverify ? btn("", `teamReverify(${i}, '${sc}')`, "Verify again",
       "Run one more independent check — e.g. after you fixed something by hand") : "";
@@ -4437,7 +4438,7 @@ function stCard(s, i, sc = "t") {
     s.status === "passed" && canDiff && btn("st-sec", `teamCopyMerge(${i}, '${sc}')`, "Copy merge", "Copy the merge command"),
     canReverify && s.status !== "failed" && btn("st-sec", `teamReverify(${i}, '${sc}')`, "Verify again",
       "Run one more independent check — e.g. after you fixed something by hand"),
-    !live && s.worktree && !s.discarded && btn("st-sec", `teamDiscard(${i}, '${sc}')`, "Discard", "Remove the worktree and delete its branch"),
+    !live && s.worktree && !s.discarded && !s.cleaned && btn("st-sec", `teamDiscard(${i}, '${sc}')`, "Discard", "Remove the worktree and delete its branch"),
   ].filter(Boolean).join("");
   return `<article class="st-card s-${esc(s.status)}" data-st="${esc(s.id)}">
     <div class="st-top">${sc === "i" ? badge(esc(s.status), ST_BADGE[s.status]) : ""}

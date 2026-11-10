@@ -158,6 +158,7 @@ DEFAULT_WORKSPACE = "default"
 DEFAULT_GROUP = "grp_default"
 DRY_RUN = os.environ.get("ORCH_DRY_RUN", "0") == "1"
 POLL_INTERVAL = int(os.environ.get("ORCH_POLL_INTERVAL", "5"))
+SWEEP_INTERVAL = 600   # s — run_loop dọn worktree đã merge của đội (team.sweep_merged) mỗi bấy nhiêu
 MAX_CONCURRENT = int(os.environ.get("ORCH_MAX_CONCURRENT", "3"))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 # Nơi claude cất transcript — dùng để hỏi "CLI này mở được id đó không" trước khi đổi engine
@@ -4973,8 +4974,13 @@ async def run_loop():
     chạy SONG SONG ngay; signal tới agent đang bận chỉ đợi lock session của agent đó
     (không chặn cả batch như gather trước đây)."""
     print(f"[orchestrator] loop start (dry_run={DRY_RUN}, poll={POLL_INTERVAL}s, db={_db_path()})")
+    import team
+    swept = time.monotonic()
     while True:
         try:
+            if time.monotonic() - swept >= SWEEP_INTERVAL:
+                swept = time.monotonic()
+                team.sweep_soon()
             for sig in eligible_signals():
                 if sig["id"] in _inflight:
                     continue
@@ -6715,6 +6721,7 @@ def build_app():
         import team
         # Task nền + run dở của đội đã chết cùng tiến trình cũ: kết thúc hoặc kiểm lại (team.py).
         team.reconcile()
+        team.sweep_soon()   # worktree của việc đã merge từ lần chạy trước
         async with AsyncExitStack() as stack:
             # Khởi động session manager của từng MCP sub-app (bắt buộc cho /mcp).
             await stack.enter_async_context(signal_app.router.lifespan_context(app))
