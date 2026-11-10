@@ -138,8 +138,8 @@ async def main():
               len(bad.get("subtasks", [])) <= 10 and len(bad.get("decisions", [])) == 25, str(bad)[:200])
 
         check("the call without paging params keeps its keys and caps",
-              set(old) == {"directors", "subtasks", "decisions", "proposals", "edges", "graph_mode", "models",
-                           "engines", "playbooks", "max_active", "max_attempts", "now"}
+              set(old) == {"directors", "subtasks", "decisions", "proposals", "edges", "graph_mode", "team_model",
+                           "learned_effort", "playbooks", "max_active", "max_attempts", "now"}
               and len(old["subtasks"]) == 26 and len(old["decisions"]) == 25, str(sorted(old))[:300])
         for _ in range(185):
             team._exec("INSERT INTO team_decisions (workspace_id, session_id, decision, ts) VALUES (?, 'dir-1', 'x', ?)",

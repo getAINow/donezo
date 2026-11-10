@@ -92,6 +92,7 @@ so.register_session("peer-2", "other", cwd=str(REPO), model="", workspace_id=WS)
 # Each verifier session looks up what to do from VERIFY_PLAN[subtask] (one entry per attempt).
 VERIFY_PLAN, BUILD_PLAN, SEEN = {}, {}, []
 REFLECT_PLAN, DURING = {}, {}     # what a reflection does; each team session's view of git mid-run
+RUNS = {}                         # session name → the --model/--effort flags of each of its runs
 
 
 def _key_in(prompt):
@@ -106,6 +107,7 @@ def _st_in(prompt, tag):
 
 async def fake_run(session, prompt, on_event=None, dry_run=False):
     SEEN.append((session["name"], prompt))
+    RUNS.setdefault(session["name"], []).append(so._claude_model_effort_flags(session))
     cwd = Path(session.get("cwd") or ".")
     name = session["name"]
     # A fake that writes must never touch anything outside this check's temp folder — not even
@@ -180,6 +182,160 @@ def to_lead():
 
 def session_of(sid):
     return so.get_session(sid) or {}
+
+
+# ── Effort / model cases (a–f) ───────────────────────────────────────────────
+WS2 = so.create_workspace("effort")["id"]
+EFF = {}          # case → subtask ids it made
+
+
+def lead2(label, model):
+    """A director in WS2 on a non-Opus model at effort max: neither may leak into its team."""
+    repo = TMP / f"eff-{label}"
+    repo.mkdir()
+    git("init", "-q", "-b", "main", cwd=repo)
+    git("config", "user.email", "dev@example.com", cwd=repo)
+    git("config", "user.name", "Dev", cwd=repo)
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "init", cwd=repo)
+    so.register_session(f"dir-e{label}", f"lead-e{label}", cwd=str(repo), model=model, effort="max",
+                        workspace_id=WS2)
+    return f"dir-e{label}"
+
+
+async def run_one(director, playbook, effort="", verify=("PASS",), build=None):
+    r = team.spawn_subagent(director, playbook, f"do {playbook}", "it works", title=playbook,
+                            **({"effort": effort} if effort else {}))
+    st_id = r["id"]
+    VERIFY_PLAN[st_id] = list(verify)
+    if build:
+        BUILD_PLAN[st_id] = list(build)
+    await drain()
+    return team.get_subtask(st_id)
+
+
+def efforts(session_id):
+    """The --effort of every run that session made, in order."""
+    out = []
+    for flags in RUNS.get(session_of(session_id).get("name", ""), []):
+        out.append(flags[flags.index("--effort") + 1] if "--effort" in flags else "")
+    return out
+
+
+def models(session_id):
+    return {f[f.index("--model") + 1] if "--model" in f else "" for f in
+            RUNS.get(session_of(session_id).get("name", ""), [])}
+
+
+def verifier_efforts(st_id):
+    return [efforts(s["id"]) for s in sorted(
+        (s for s in so.list_sessions() if s.get("team_role") == "verifier"
+         and s["name"].startswith(f"sub-{st_id[3:]}-verify")), key=lambda s: s["name"])]
+
+
+async def case_pinned_model():
+    so.set_setting(f"team_models:{WS2}", json.dumps({"implement": "agy", "investigate": "agy",
+                                                     "verify": "agy:gemini-3.1-pro-high"}))
+    opus = "claude-opus-5-5"   # literal: the pin itself is under test
+    for label, model, playbook in (("agy", "agy:gemini-3.1-pro-high", "feature"),
+                                   ("son", "sonnet", "investigate")):
+        d = lead2(label, model)
+        st = await run_one(d, playbook, build=["read"] if playbook == "investigate" else None)
+        EFF.setdefault("a", []).append(st["id"])
+        b, v = session_of(st["session_id"]), session_of(st["verifier_id"])
+        check(f"a) director on {model} + saved team_models=agy → builder and verifier run {opus}",
+              opus == "claude-opus-5-5" and st["status"] == "passed" and st["model"] == opus
+              and b.get("model") == opus and v.get("model") == opus
+              and so.engine_name_of_session(b) == so.engine_name_of_session(v) == "claude"
+              and models(b["id"]) == models(v["id"]) == {opus},
+              f"{st['status']} {st['reason']} row={st['model']} builder={b.get('model')} verifier={v.get('model')}")
+    import inspect
+    params = inspect.signature(signal_mcp.spawn_subagent).parameters
+    check("a) MCP spawn_subagent takes effort and no model", "effort" in params and "model" not in params,
+          str(list(params)))
+
+
+async def case_effort_passthrough():
+    st = await run_one("dir-eagy", "feature", effort="low")
+    check("b) effort='low' reaches the builder's --effort",
+          st["effort_start"] == st["effort"] == "low" and efforts(st["session_id"]) == ["low"],
+          f"{st['effort_start']} {efforts(st['session_id'])}")
+    st = await run_one("dir-eagy", "feature")
+    check("b) empty effort on feature defaults to high", st["effort_start"] == "high"
+          and efforts(st["session_id"]) == ["high"], f"{st['effort_start']} {efforts(st['session_id'])}")
+    inv = team.get_subtask(EFF["a"][1])
+    check("b) empty effort on investigate defaults to medium",
+          inv["effort_start"] == "medium" and efforts(inv["session_id"]) == ["medium"],
+          f"{inv['effort_start']} {efforts(inv['session_id'])}")
+    bad = team.spawn_subagent("dir-eagy", "feature", "x", "y", effort="max")
+    res = await signal_mcp.spawn_subagent(from_role="lead-eagy", playbook="feature", brief="x",
+                                          done_when="y", effort="turbo", workspace_id=WS2)
+    check("b) an effort outside low|medium|high|xhigh is rejected (team and MCP)",
+          "effort" in bad.get("error", "") and res.startswith("⛔") and "low, medium, high, xhigh" in res,
+          f"{bad} / {res}")
+
+
+async def case_step_up():
+    st = await run_one("dir-eagy", "feature", effort="medium", verify=("FAIL", "FAIL", "PASS"))
+    EFF["c"] = [st["id"]]
+    check("c) each verifier FAIL raises the builder one level: medium → high → xhigh",
+          st["status"] == "passed" and efforts(st["session_id"]) == ["medium", "high", "xhigh"]
+          and st["effort_start"] == "medium" and st["effort"] == "xhigh"
+          and session_of(st["session_id"]).get("effort") == "xhigh",
+          f"{st['status']} {efforts(st['session_id'])} row={st['effort_start']}→{st['effort']}")
+    st = await run_one("dir-eagy", "feature", effort="high", verify=("FAIL", "FAIL", "PASS"))
+    EFF["c"].append(st["id"])
+    check("c) the step-up stops at xhigh", efforts(st["session_id"]) == ["high", "xhigh", "xhigh"]
+          and st["effort"] == "xhigh" and models(st["session_id"]) == {"claude-opus-5-5"},
+          f"{efforts(st['session_id'])} {models(st['session_id'])}")
+
+
+async def case_verifier_effort():
+    st = await run_one("dir-eagy", "bugfix", verify=("silent", "PASS"))
+    check("d) the verifier runs at high; the re-run after no verdict runs at xhigh",
+          st["status"] == "passed" and verifier_efforts(st["id"]) == [["high"], ["xhigh"]]
+          and st["effort"] == st["effort_start"] == "high" and efforts(st["session_id"]) == ["high"],
+          f"{st['status']} verifiers={verifier_efforts(st['id'])} builder={efforts(st['session_id'])}")
+    first = team.get_subtask(EFF["c"][0])
+    check("d) every verifier of a normal check runs at high",
+          verifier_efforts(first["id"]) == [["high"]] * 3, str(verifier_efforts(first["id"])))
+
+
+async def case_learned_start():
+    ov = team.overview(WS2)
+    check("e) two of the last five feature tasks stepped up → feature starts one level higher",
+          ov["learned_effort"]["feature"] == "xhigh" and ov["learned_effort"]["investigate"] == "medium",
+          str(ov["learned_effort"]))
+    starts = []
+    for _ in range(4):
+        st = await run_one("dir-eagy", "feature", effort="low")
+        starts.append(st["effort_start"])
+    check("e) the director's choice is raised too, until first-time passes push the step-ups out",
+          starts == ["medium"] * 4, str(starts))
+    check("e) …and the learned start is back at base",
+          team.overview(WS2)["learned_effort"]["feature"] == "high", str(team.overview(WS2)["learned_effort"]))
+    st = await run_one("dir-eagy", "feature", effort="low")
+    check("e) a new task now starts where the director asked", st["effort_start"] == "low", st["effort_start"])
+
+
+async def case_director_line():
+    lead = [p for n, p in SEEN if n == "lead-eagy"]
+    stepped = next((p for p in lead if EFF["c"][0] in p and "[SUB-AGENT PASSED]" in p), "")
+    plain = next((p for p in lead if EFF["a"][0] in p and "[SUB-AGENT PASSED]" in p), "")
+    check("f) the PASSED message states the step-up",
+          "effort: medium → xhigh (stepped up 2 levels after a verifier FAIL)" in stepped, stepped[:300])
+    check("f) a first-time pass states the effort", "effort: high\n" in plain, plain[:300])
+    st = await run_one("dir-eagy", "refactor", effort="low", verify=("FAIL",))
+    failed = next((p for p in [p for n, p in SEEN if n == "lead-eagy"]
+                   if st["id"] in p and "[SUB-AGENT FAILED]" in p), "")
+    check("f) the FAILED message states the effort too",
+          st["status"] == "failed" and "effort: low → high (stepped up 2 levels after a verifier FAIL)" in failed,
+          failed[:300])
+    items = {x["id"]: x for x in team.overview(WS2)["subtasks"]}
+    check("f) the Team tab gets the same effort line per task",
+          items[EFF["c"][0]]["effort_line"] == "effort: medium → xhigh (stepped up 2 levels after a verifier FAIL)"
+          and items[EFF["a"][0]]["effort_line"] == "effort: high", str({k: v["effort_line"] for k, v in items.items()}))
 
 
 async def main():
@@ -643,6 +799,18 @@ async def main():
     check("a database from before the rechecking column gets it, and keeps its rows",
           "rechecking" in cols and "rechecking" in now_cols and kept == n, str(now_cols))
 
+    # ── a–f: Opus 5.5 pinned, effort per task, step-up on FAIL, learned start ─
+    # Own workspace: the learned start reads this workspace's history, so the cases above (which
+    # stepped up plenty) must not leak into it. Each case runs on its own so a crash in one (on
+    # code without effort support) is reported as that case failing, not as the whole file dying.
+    for name, case in (("a", case_pinned_model), ("b", case_effort_passthrough), ("c", case_step_up),
+                       ("d", case_verifier_effort), ("e", case_learned_start), ("f", case_director_line)):
+        try:
+            await case()
+        except Exception as e:  # noqa: BLE001
+            check(f"case {name} ran", False, repr(e))
+            await drain()
+
     # ── Decisions, overview, API ─────────────────────────────────────────────
     res = await signal_mcp.record_decision(from_role="lead", decision="split into two units",
                                            reason="they touch different files")
@@ -691,23 +859,12 @@ async def main():
               (await c.get("/api/team/director/nobody")).status_code == 404)
         r = await c.post("/api/sessions/spawn", json={"name": "sub-sneaky", "workspace_id": WS})
         check("agents cannot take a team name", r.status_code == 400, r.text)
-        r = await c.post("/api/team/models", json={"workspace_id": WS, "roles": {"verify": "opus"}})
-        check("model roles can be changed", r.json().get("verify") == "opus", r.text)
-        # Claude trừ khi NGƯỜI DÙNG chọn Gemini cho vai đó; director chạy agy không kéo đội theo.
-        gem = {"model": "agy:gemini-3.1-pro-high"}
-        check("a director on Gemini still gets Claude sub-agents",
-              team.resolve_model(WS, "implement", gem) == "", team.resolve_model(WS, "implement", gem))
-        check("a director on Claude passes its model down",
-              team.resolve_model(WS, "implement", {"model": "sonnet"}) == "sonnet")
-        team.set_model_roles(WS, {"investigate": "agy"})
-        check("Gemini runs when the user picks it for a role",
-              team.resolve_model(WS, "investigate", {"model": "opus"}) == "agy")
-        so.set_setting(f"team_models:{WS}", json.dumps({"verify": "@other"}))
-        check("an old '@other' setting falls back to Claude", team.model_roles(WS)["verify"] == "", team.model_roles(WS))
-        so.set_setting(f"team_models:{WS}", "{}")
-        res = await signal_mcp.spawn_subagent(from_role="lead", playbook="investigate", brief="b",
-                                              done_when="d", model="agy:gemini-3.1-pro-high")
-        check("a director cannot pick Gemini for a sub-agent", res.startswith("⛔") and "Claude" in res, res)
+        r = await c.post("/api/team/models", json={"workspace_id": WS, "roles": {"verify": "agy"}})
+        check("there is no per-role model route any more", r.status_code in (404, 405), str(r.status_code))
+        r = await c.get("/api/team", params={"workspace_id": WS})
+        check("the team state names the fixed model and the learned start per playbook, not model roles",
+              r.json().get("team_model") == "claude-opus-5-5" and "models" not in r.json()
+              and set(r.json().get("learned_effort", {})) == set(team.PLAYBOOKS), r.text[:200])
         r = await c.post("/api/signals", json={"to_role": "other", "from_role": "lead",
                                                "message": "x", "done_when": "y", "workspace_id": WS})
         check("POST /api/signals accepts done_when", r.status_code == 200, r.text)

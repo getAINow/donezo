@@ -41,9 +41,10 @@ its own login and subscription.
 - A verdict is tied to the commit that was checked; a verifier that edits files has its verdict
   thrown away. Repeated FAILs stop at a cap and tell the director.
 - **Team** tab: a pipeline board (Building → Verifying → Passed / Failed) with each sub-agent's
-  step, verdict and diff; the director's decision log; who may message whom; models per role;
+  step, verdict and diff; the director's decision log; who may message whom; the effort each task ran at;
   **Reflect**, which turns failed runs into a playbook change you approve.
-- Sub-agents run on Claude; Gemini only when you pick it for a role in the Team tab.
+- Sub-agents and verifiers always run Claude Opus 5.5. A FAIL steps the builder's effort up one
+  level (to xhigh at most).
 
 ![Team tab: sub-agents by stage and the director's decisions](documentation/images/team.png)
 

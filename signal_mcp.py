@@ -328,9 +328,10 @@ def _caller(from_role: str, workspace_id: str = ""):
 
 @mcp.tool()
 async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: str, title: str = "",
-                         model: str = "", workspace_id: str = ""):
+                         effort: str = "", workspace_id: str = ""):
     """Delegate one unit of work to a new sub-agent (pstack style). Returns its subtask id at once;
     the orchestrator messages you [SUB-AGENT PASSED] or [SUB-AGENT FAILED] when it is done.
+    Sub-agents and verifiers always run Claude Opus 5.5.
 
     Args:
         from_role: your exact session name.
@@ -342,19 +343,17 @@ async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: s
                expected output, a flow driven in the running app, a value read back. "The build
                passes" is not enough.
         title: a short label for the dashboard.
-        model: optional Claude model (e.g. "opus", "sonnet"); default follows the workspace's
-               model roles. Sub-agents run on Claude — only the user picks Gemini (agy).
+        effort: low = mechanical (renames, text, config); medium = normal features and fixes;
+               high = cross-module, concurrency, security; xhigh = hard bugs. Empty = medium for
+               investigate, high otherwise. A verifier FAIL steps it up one level automatically,
+               so start as low as the task honestly allows.
         workspace_id: your workspace, if your name exists in several.
     """
     orch, me, err = _caller(from_role, workspace_id)
     if err:
         return err
-    # agy chỉ khi người dùng chọn (tab Team), không phải director tự chọn.
-    if model and orch.engine_from_model(model) != "claude":
-        return ("⛔ Sub-agents run on Claude. Leave model empty or name a Claude model (opus, "
-                "sonnet…) — only the user can pick Gemini, per role in the Team tab.")
     import team
-    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, model)
+    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, effort)
     if res.get("error"):
         return f"⛔ {res['error']}"
     return (f"Sub-agent {res['id']} queued ({playbook}). End your turn when you have delegated "
