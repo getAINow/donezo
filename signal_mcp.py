@@ -460,7 +460,7 @@ async def board_update(from_role: str, card_id: int, status: str = "", title: st
                        workspace_id: str = ""):
     """Change one of your cards. Empty arguments stay as they are. status: todo | in_progress |
     done | dropped (done and dropped are not undone by the linked sub-agent's progress). A
-    proposed card's status is not yours to change: only the user approves or rejects it."""
+    proposed card is not yours to change, and a proposal the user rejected stays rejected."""
     board, ws, me, err = _board_owner(from_role, workspace_id)
     if err:
         return err

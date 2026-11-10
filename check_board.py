@@ -404,8 +404,41 @@ async def case_j():
               and after == {"dir-1": 1} and everywhere == {WS: 1, WS_B: 1}, f"{r.text} {after} {everywhere}")
 
 
+async def case_k():
+    import httpx
+    r = board.propose(WS, "dir-1", "Rejected idea", "why")
+    board.decide(WS, r["id"], False, "no")
+    m = await signal_mcp.board_update(from_role="lead", card_id=r["id"], status="todo")
+    check("k) board_update cannot revive a proposal the user rejected",
+          m.startswith("⛔") and "user rejected" in m
+          and (card(r["id"])["status"], card(r["id"])["decision"]) == ("dropped", "rejected"), m)
+    p = board.propose(WS, "dir-1", "Pending idea", "orig body")
+    m1 = await signal_mcp.board_update(from_role="lead", card_id=p["id"], title="Hijacked")
+    m2 = await signal_mcp.board_update(from_role="lead", card_id=p["id"], body="new body")
+    check("k) board_update cannot rewrite a proposed card's title or body",
+          all(x.startswith("⛔") and "only the user approves or rejects a proposal" in x for x in (m1, m2))
+          and (card(p["id"])["title"], card(p["id"])["body"]) == ("Pending idea", "orig body"), f"{m1} / {m2}")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()),
+                                 base_url="http://test") as c:
+        h1 = await c.post(f"/api/board/{r['id']}", json={"workspace_id": WS, "status": "todo"})
+        h2 = await c.post(f"/api/board/{p['id']}", json={"workspace_id": WS, "title": "User title",
+                                                         "body": "user body"})
+    check("k) HTTP still moves a rejected card back and edits a proposed card",
+          (h1.status_code, h2.status_code) == (200, 200) and card(r["id"])["status"] == "todo"
+          and (card(p["id"])["title"], card(p["id"])["body"], card(p["id"])["status"])
+          == ("User title", "user body", "proposed"), f"{h1.text} {h2.text}")
+    m = await signal_mcp.board_update(from_role="lead", card_id=r["id"], status="in_progress")
+    check("k) once the user brought it back, its agent can work on it",
+          not m.startswith("⛔") and card(r["id"])["status"] == "in_progress", m)
+    d = await add("lead", "Dropped plain")
+    await signal_mcp.board_update(from_role="lead", card_id=d, status="dropped")
+    m = await signal_mcp.board_update(from_role="lead", card_id=d, status="todo")
+    check("k) an ordinary dropped card still moves back to todo by its agent",
+          not m.startswith("⛔") and card(d)["status"] == "todo", m)
+
+
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j):
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_k):
         try:
             res = case()
             if asyncio.iscoroutine(res):
