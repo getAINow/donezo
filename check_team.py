@@ -60,6 +60,8 @@ def check(name, ok, detail=""):
     print(("FAIL " if not ok else "ok   ") + name + (f" — {detail}" if not ok else ""))
 
 
+so.DB_DIR = TMP / "db"                               # the DB and everything under DB_DIR stay in TMP
+assert Path.home() / ".session_orch_db" not in [so.DB_DIR, *so.DB_DIR.parents], so.DB_DIR
 db = so.DB_DIR / "check_team.db"
 for ext in ("", "-wal", "-shm"):
     Path(str(db) + ext).unlink(missing_ok=True)
@@ -386,6 +388,10 @@ async def case_sweep():
     team._exec("INSERT INTO subtasks (id, director_id, playbook, status, repo, worktree, branch, base_sha, "
                "head_sha, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                (empty, "dir-sweep", "feature", "failed", str(A), wt, br0, base, base, so._now(), so._now()))
+    no_wt = task(A, merge=True)   # a branch but no worktree on the row: nothing remove_worktree could do
+    shutil.rmtree(team.get_subtask(no_wt)["worktree"])
+    git("worktree", "prune", cwd=A)
+    team._exec("UPDATE subtasks SET worktree = '' WHERE id = ?", (no_wt,))
     in_b = task(B, merge=True)
     only_a = task(B)          # merged nowhere in B; a branch of the same name IS merged in A
     br = team.get_subtask(only_a)["branch"]
@@ -407,6 +413,9 @@ async def case_sweep():
           str({k: there(v) for k, v in active.items()}))
     check("sweep b) a task with no commits of its own is kept (Verify again still works)",
           there(empty) == (True, True, 0), str(there(empty)))
+    nb = team.get_subtask(no_wt)
+    check("sweep b) a row with a branch but no worktree is not marked cleaned, its branch stays",
+          nb.get("cleaned", 0) == 0 and git("branch", "--list", nb["branch"], cwd=A), str(dict(nb))[:200])
     check("sweep e) a folder under worktrees/ that no subtask points to is kept",
           (orphan / "keep.txt").exists())
     check("sweep f) a second repo's task is judged against its own repo",

@@ -441,6 +441,7 @@ def _sweepable(st):
     if not (has_wt or has_br):
         return False
     if has_wt:
+        # porcelain không liệt kê file bị ignore (.env, ghi chú…): chúng bị xoá cùng worktree.
         rc, out = _git(["status", "--porcelain"], wt)
         if rc != 0 or out.strip():
             return False
@@ -458,8 +459,9 @@ def sweep_merged():
     done = []
     try:
         q = ",".join("?" * len(ACTIVE))
+        # worktree != '': remove_worktree cần nó; make_worktree luôn ghi cả worktree lẫn branch.
         for st in _rows(f"SELECT * FROM subtasks WHERE cleaned = 0 AND discarded = 0 AND repo != '' "
-                        f"AND (worktree != '' OR branch != '') AND status NOT IN ({q})", ACTIVE):
+                        f"AND worktree != '' AND status NOT IN ({q})", ACTIVE):
             if not _sweepable(st):
                 continue
             # Trạng thái có thể đã đổi trong lúc chạy git (vd Verify again): chỉ dọn nếu vẫn đã xong.
