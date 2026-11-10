@@ -244,6 +244,12 @@ def _update(st_id, _from=None, **fields):
     else:
         _exec(f"UPDATE subtasks SET {cols} WHERE id = ?", (*fields.values(), st_id))
     st = get_subtask(st_id)
+    if st and st["kind"] == "scout" and st["status"] in ("passed", "failed", "cancelled"):
+        import planner                  # noqa: PLC0415 — planner imports team
+        try:
+            planner.sweep_folders()     # every ending of a scout run passes here
+        except Exception as e:  # noqa: BLE001 — cleanup must never stop the run's end
+            print(f"[planner] sweep: {e!r}", flush=True)
     if st:
         so.publish({"type": "team", "subtask": st_id, "status": st["status"],
                     "workspace_id": st["workspace_id"]})
