@@ -220,7 +220,7 @@ loginctl enable-linger "$USER"     # start at boot, not only when you log in</co
     <tr><td>An agent cannot find <code>send_signal</code> or <code>spawn_subagent</code></td><td>Press <span class="ui">Connect</span> next to <code>signal</code> in <a href="#connections">Connections</a>, then press reload on the card.</td></tr>
     <tr><td>A CLI is not found</td><td>Set <code>CLAUDE_BIN</code> or <code>ORCH_AGY_BIN</code> to its full path. Also check you are logged in to that CLI.</td></tr>
     <tr><td>A terminal shows <span class="ui">disconnected — press 🔄 to reload</span></td><td>Press the reload button on the card's left edge.</td></tr>
-    <tr><td>A card shows <span class="ui">The automatic run finished</span></td><td>That is normal. Press reload to load the new context and keep chatting.</td></tr>
+    <tr><td>A terminal says <span class="ui">terminal opens when it finishes</span></td><td>That is normal. A background run is using the conversation; the terminal opens by itself when it ends.</td></tr>
     <tr><td><span class="ui">Create agent</span> says <span class="ui">Pick a model</span> or <span class="ui">Pick a workspace</span></td><td>Each field is required. <span class="ui">New workspace</span> on <span class="ui">Home</span> makes one if you have none.</td></tr>
     <tr><td>A sub-agent card says <span class="ui">no worktree</span></td><td>The director's folder is not a git repository, so the sub-agent shared it. Run <code>git init</code> and make a first commit, or point the director at a repository.</td></tr>
     <tr><td>A message sits there and nothing runs</td><td>Check whether the agent is paused, the workspace is suspended, or it is waiting for approval. See <a href="control.html#stop">how to stop things</a>.</td></tr>

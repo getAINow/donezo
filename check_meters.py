@@ -128,8 +128,10 @@ check("an agy terminal is unchanged",
 user_settings = TMP / "claude-config" / "settings.json"
 user_settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo mine"}}),
                          encoding="utf-8")
-check("a user with their own statusLine keeps it (no --settings)",
-      "--settings" not in so.terminal_launch_argv(so.get_session("card-a"), "claude"))
+own = so.terminal_launch_argv(so.get_session("card-a"), "claude")
+own = json.loads(Path(own[2]).read_text(encoding="utf-8")) if own[1:2] == ["--settings"] else {}
+check("a user with their own statusLine keeps it (our file has only the turn hooks)",
+      "statusLine" not in own and set(own.get("hooks", {})) == set(so.TURN_HOOKS), own)
 check("and their settings file is never written",
       json.loads(user_settings.read_text(encoding="utf-8"))["statusLine"]["command"] == "echo mine")
 user_settings.unlink()

@@ -3844,10 +3844,10 @@ METERS = {}       # card id → meter mới nhất
 PLAN_USAGE = {}   # của CẢ tài khoản: rate_limits của payload mới nhất có trường đó
 
 
-def _statusline_command():
-    """Lệnh statusLine chạy được dù claude gọi qua bash, cmd hay PowerShell: đường TUYỆT ĐỐI tới
-    curl (PowerShell coi `curl` là alias của Invoke-WebRequest), không nháy, không @, không pipe;
-    `-T -` gửi stdin bằng PUT. '' = không lắp được."""
+def _statusline_command(path="/api/meters"):
+    """Lệnh statusLine (và hook) chạy được dù claude gọi qua bash, cmd hay PowerShell: đường TUYỆT
+    ĐỐI tới curl (PowerShell coi `curl` là alias của Invoke-WebRequest), không nháy, không @, không
+    pipe; `-T -` gửi stdin bằng PUT. '' = không lắp được."""
     curl = shutil.which("curl")
     # shortcut: thiếu curl hoặc đường của nó có dấu cách thì bỏ hẳn statusline; cần chạy ở đó thì
     # phải viết lệnh có nháy riêng cho từng shell.
@@ -3862,7 +3862,7 @@ def _statusline_command():
     if ":" in host:
         host = f"[{host}]"
     # as_posix: bash nuốt dấu \ của C:\Windows\...; cmd và PowerShell đều nhận dấu /.
-    return f"{Path(curl).as_posix()} -s -m 2 -T - http://{host}:{ORCH_PORT}/api/meters"
+    return f"{Path(curl).as_posix()} -s -m 2 -T - http://{host}:{ORCH_PORT}{path}"
 
 
 def _user_has_statusline():
@@ -3870,14 +3870,24 @@ def _user_has_statusline():
     return "statusLine" in _user_claude_settings()
 
 
+# Hook báo lượt của terminal (xem on_turn_hook). --settings CỘNG thêm hook vào hook của người dùng,
+# không thay. PreCompact/SessionStart: `/compact` gõ tay không bắn UserPromptSubmit/Stop.
+TURN_HOOKS = ("SessionStart", "UserPromptSubmit", "Stop", "PreCompact")
+
+
 def _statusline_settings():
     """File cho `claude --settings` (file chứ không phải chuỗi JSON trong argv: nháy JSON trên
-    command line Windows rất dễ vỡ). None = không lắp statusline."""
-    cmd = "" if _user_has_statusline() else _statusline_command()
+    command line Windows rất dễ vỡ): statusline (khi người dùng chưa có cái của họ) + hook lượt.
+    None = không lắp được gì."""
+    cmd = _statusline_command("/api/turn")
     if not cmd:
         return None
+    hook = [{"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}]
+    body = {"hooks": {ev: hook for ev in TURN_HOOKS}}
+    if not _user_has_statusline():
+        body["statusLine"] = {"type": "command", "command": _statusline_command()}
     f = DB_DIR / f"statusline-{ORCH_PORT}.json"
-    body = json.dumps({"statusLine": {"type": "command", "command": cmd}})
+    body = json.dumps(body)
     try:
         if not f.is_file() or f.read_text(encoding="utf-8") != body:
             DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -4060,7 +4070,8 @@ class _PosixPty:
             return b""
 
     def write(self, data):
-        os.write(self.fd, data)
+        while data:                      # một báo cáo dài lớn hơn bộ đệm PTY: os.write ghi từng phần
+            data = data[os.write(self.fd, data):]
 
     def resize(self, rows, cols):
         import fcntl
@@ -4652,6 +4663,141 @@ def _lock_for(session_id: str) -> asyncio.Lock:
     return _locks[session_id]
 
 
+# ─── Một người ghi transcript mỗi card ───────────────────────────────────────
+# Terminal claude đang mở và run nền cùng ghi MỘT transcript là hỏng hội thoại. Cả ws_terminal lẫn
+# _process_signal_locked hỏi cùng một sổ: card id → {"kind": "run"} hoặc mục terminal_writer().
+# Có terminal thì signal được GÕ vào nó lúc rảnh, không thì chờ; có run thì terminal chờ run xong.
+# Lượt của terminal biết qua hook (TURN_HOOKS → PUT /api/turn → on_turn_hook).
+# Giới hạn: `claude --resume` người dùng tự chạy ngoài Donezo thì sổ này không thấy.
+_WRITERS: dict = {}
+TYPING_QUIET = float(os.environ.get("ORCH_TYPING_QUIET", "3"))   # giây im phím trước khi gõ hộ
+_PASTE_RE = re.compile(r"\x1b\[200~.*?\x1b\[201~", re.S)
+_ESC_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|O.)?", re.S)
+_bg_tasks: set = set()
+
+
+def terminal_writer(term):
+    """Mục sổ của một terminal vừa mở. busy=True tới hook đầu tiên (SessionStart): CLI chưa vẽ xong
+    ô nhập thì chữ gõ vào là mất; CLI không có hook (agy) thì không bao giờ rảnh → signal chờ nó đóng."""
+    return {"kind": "terminal", "term": term, "busy": True, "draft": 0, "typed": 0.0,
+            "compact": False, "sig": None, "run": None, "started": False}
+
+
+def note_terminal_input(w, data):
+    """Byte người dùng gõ → mốc 'vừa gõ' + ước lượng ô nhập còn chữ dở. Byte xterm tự đáp truy vấn
+    TUI (ESC[…R, ESC[I/O) không phải người gõ nên bị bỏ."""
+    data = str(data or "")
+    if "\x1b[A" in data or "\x1bOA" in data:   # ↑ kéo câu cũ vào ô nhập: không thấy chữ nhưng có nháp
+        w["draft"], w["typed"] = max(w["draft"], 1), time.monotonic()
+    s = _ESC_RE.sub("", _PASTE_RE.sub("x", data))
+    if not s:
+        return
+    w["typed"] = time.monotonic()
+    n = w["draft"]
+    for ch in s:
+        if ch in "\r\x03\x15":        # Enter gửi đi, Ctrl-C / Ctrl-U xoá ô nhập
+            n = 0
+        elif ch in "\x7f\x08":
+            n = max(0, n - 1)
+        elif ch >= " ":
+            n += 1
+    w["draft"] = n
+
+
+def _terminal_free(w):
+    return (not w["busy"] and not w["draft"] and w["sig"] is None
+            and time.monotonic() - w["typed"] >= TYPING_QUIET)
+
+
+def queued_signals(session_id):
+    """Id signal đang chờ chạy cho session này, theo thứ tự giao (cùng điều kiện eligible_signals)."""
+    conn = _conn()
+    rows = conn.execute("SELECT id FROM signals WHERE to_session = ? AND ((status = 'pending' AND "
+                        "requires_approval = 0) OR status = 'approved') ORDER BY id",
+                        (session_id,)).fetchall()
+    conn.close()
+    return [r["id"] for r in rows]
+
+
+def _spawn(coro):
+    t = asyncio.get_running_loop().create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+async def _type_into_terminal(w, target, signal, wsid):
+    """Gõ signal vào terminal đang rảnh như người dán rồi Enter. Bracketed paste để báo cáo nhiều
+    dòng vào nguyên MỘT prompt. Cùng prompt một run nền nhận (inject_prompt)."""
+    text = inject_prompt(target, signal["message"], signal.get("from_session", ""),
+                         signal.get("expects_reply", 1))
+    # 'processing' từ lúc gõ, 'done' khi hook Stop của chính lượt đó về (on_turn_hook).
+    w.update(busy=True, sig=signal, started=False)
+    set_signal_status(signal["id"], "processing")
+    w["run"] = start_run(target["id"], signal["id"], signal["message"], _now(), wsid)
+    publish({"type": "signal", "id": signal["id"], "status": "processing", "session": target["id"],
+             "workspace_id": wsid})
+    publish({"type": "run_start", "run_id": w["run"], "session": target["id"],
+             "signal": signal["id"], "workspace_id": wsid})
+    loop = asyncio.get_running_loop()
+    paste = "\x1b[200~" + re.sub(r"\r?\n", "\r", text) + "\x1b[201~"
+    try:
+        await loop.run_in_executor(_PTY_POOL, w["term"].write, paste.encode("utf-8"))
+        await asyncio.sleep(0.3)   # Enter dính liền cuối paste thì TUI có thể coi là một phần paste
+        await loop.run_in_executor(_PTY_POOL, w["term"].write, b"\r")
+    except OSError:
+        pass                       # terminal vừa đóng: terminal_closed trả signal về hàng đợi
+
+
+def on_turn_hook(card_id, p):
+    """Hook của terminal claude: UserPromptSubmit/PreCompact = lượt bắt đầu, Stop = lượt xong.
+    `/compact` gõ tay không bắn Stop mà kết thúc bằng SessionStart(source=compact); auto-compact
+    giữa lượt cũng bắn cái đó nên chỉ tính khi PreCompact trước nó là manual."""
+    w = _WRITERS.get(card_id)
+    if not w or w["kind"] != "terminal":
+        return
+    ev = p.get("hook_event_name")
+    if ev in ("UserPromptSubmit", "PreCompact"):
+        w.update(busy=True, started=bool(w["sig"]),
+                 compact=ev == "PreCompact" and p.get("trigger") == "manual")
+    elif ev == "Stop" or (ev == "SessionStart" and (p.get("source") != "compact" or w["compact"])):
+        sig, run_id = w["sig"], w["run"]
+        w.update(busy=False, compact=False, sig=None, run=None, started=False)
+        if sig:
+            _spawn(_finish_terminal_turn(sig, run_id, "done", str(p.get("last_assistant_message") or "")))
+
+
+def terminal_closed(w):
+    """Terminal đóng. Signal còn chờ: không đụng, poller chạy nền như cũ. Signal đã gõ mà lượt chưa
+    bắt đầu → về hàng đợi; lượt đang dở thì bị giết cùng CLI → failed."""
+    sig, run_id = w["sig"], w["run"]
+    if not sig:
+        return
+    if w["started"]:
+        _spawn(_finish_terminal_turn(sig, run_id, "failed", "terminal closed before the turn ended"))
+        return
+    finish_run(run_id, {"error": "terminal closed before the message was read"}, "error", 0, _now())
+    set_signal_status(sig["id"], "pending")
+    publish({"type": "signal", "id": sig["id"], "status": "pending", "session": sig["to_session"],
+             "workspace_id": sig.get("workspace_id")})
+
+
+async def _finish_terminal_turn(sig, run_id, status, text):
+    """Chốt signal đã gõ vào terminal như một run nền chốt, rồi đội đi bước kế (team.after_run cần
+    status + result: báo cáo của sub-agent là text cuối của lượt, hook Stop mang nó)."""
+    ok, sid, wsid = status == "done", sig["to_session"], sig.get("workspace_id")
+    if ok and text:
+        record_run_event(run_id, sid, sig["id"], 1, "text", _trunc(text), {"text": text})
+    finish_run(run_id, {"result": text, "via": "terminal"}, "ok" if ok else "error", 0, _now())
+    set_signal_status(sig["id"], status, "" if ok else text)
+    publish({"type": "run", "run_id": run_id, "session": sid, "signal": sig["id"],
+             "status": "ok" if ok else "error", "tokens": 0, "workspace_id": wsid})
+    publish({"type": "signal", "id": sig["id"], "status": status, "session": sid,
+             "workspace_id": wsid, **({"result": text} if ok else {})})
+    import team
+    await team.after_run(sig, {"signal": sig["id"], "status": status, "result": text,
+                               "reason": "" if ok else text, "tokens": 0, "run_id": run_id})
+
+
 async def process_signal(signal):
     """Xử lý 1 signal: khóa session, inject, ghi audit, cập nhật trạng thái.
 
@@ -4708,11 +4854,19 @@ async def _process_signal_locked(signal):
                          "session": target["id"], "reason": reason, "workspace_id": wsid})
                 return {"signal": signal["id"], "status": "blocked", "reason": reason}
 
+            dry = bool(signal.get("dry_run"))
+            w = _WRITERS.get(target["id"])
+            if w and not (dry or DRY_RUN):
+                # Terminal đang mở = nó là người ghi. Gõ vào lúc rảnh, từng cái theo thứ tự id.
+                if _terminal_free(w) and queued_signals(target["id"])[:1] == [signal["id"]]:
+                    await _type_into_terminal(w, target, signal, wsid)
+                    return {"signal": signal["id"], "status": "skipped", "reason": "typed into the terminal"}
+                return {"signal": signal["id"], "status": "skipped", "reason": "waiting for the terminal"}
+
             set_signal_status(signal["id"], "processing")
             set_session_status(target["id"], "running")
             publish({"type": "signal", "id": signal["id"], "status": "processing", "session": target["id"], "workspace_id": wsid})
             started = _now()
-            dry = bool(signal.get("dry_run"))
 
             # Mở run trước để có run_id, rồi stream từng bước vào run_events + SSE.
             run_id = start_run(target["id"], signal["id"], signal["message"], started, wsid)
@@ -4739,18 +4893,25 @@ async def _process_signal_locked(signal):
             # Ngoại lệ DUY NHẤT: signal bản thân nó là một lệnh slash (xem inject_prompt).
             inject_msg = inject_prompt(target, signal["message"], signal.get("from_session", ""),
                                        signal.get("expects_reply", 1))
-            while True:
-                try:
-                    res = await engine.run(target, inject_msg, on_event=on_event, dry_run=dry)
-                except Exception as e:  # noqa: BLE001
-                    res = {"ok": False, "result": f"exception: {e}", "session_id": target["id"], "tokens": 0, "raw": {}}
-                    await on_event("error", f"exception: {e}", {"error": str(e)})
-                # User bấm 🛑 kill → run chết chủ động, KHÔNG retry (retry = tự chạy lại cái vừa giết).
-                if res.get("ok") or attempts >= MAX_RETRIES or target["id"] in KILLED_SESSIONS:
-                    break
-                attempts += 1
-                await on_event("error", f"retry {attempts}/{MAX_RETRIES} after failure", {"attempt": attempts})
-                await asyncio.sleep(RETRY_BACKOFF * attempts)
+            own = target["id"] not in _WRITERS   # dry run cạnh terminal: không ghi gì, không giữ sổ
+            if own:
+                _WRITERS[target["id"]] = {"kind": "run"}
+            try:
+                while True:
+                    try:
+                        res = await engine.run(target, inject_msg, on_event=on_event, dry_run=dry)
+                    except Exception as e:  # noqa: BLE001
+                        res = {"ok": False, "result": f"exception: {e}", "session_id": target["id"], "tokens": 0, "raw": {}}
+                        await on_event("error", f"exception: {e}", {"error": str(e)})
+                    # User bấm 🛑 kill → run chết chủ động, KHÔNG retry (retry = tự chạy lại cái vừa giết).
+                    if res.get("ok") or attempts >= MAX_RETRIES or target["id"] in KILLED_SESSIONS:
+                        break
+                    attempts += 1
+                    await on_event("error", f"retry {attempts}/{MAX_RETRIES} after failure", {"attempt": attempts})
+                    await asyncio.sleep(RETRY_BACKOFF * attempts)
+            finally:
+                if own:
+                    _WRITERS.pop(target["id"], None)
             ended = _now()
 
             was_killed = target["id"] in KILLED_SESSIONS
@@ -5368,7 +5529,10 @@ def build_app():
                         "team": crew.get(s["id"]),
                         # Agent đã giao việc cho đội: panel của nó hiện mục Team.
                         "subtasks": delegated.get(s["id"]),
-                        "meter": METERS.get(s["id"])})
+                        "meter": METERS.get(s["id"]),
+                        # Signal đang chờ terminal đang mở rảnh tay (card: "N messages waiting").
+                        "term_queue": len(queued_signals(s["id"]))
+                        if (_WRITERS.get(s["id"]) or {}).get("kind") == "terminal" else 0})
         return JSONResponse(out)
 
     async def api_session_detail(request: Request):
@@ -5713,6 +5877,11 @@ def build_app():
             await websocket.send_text(f"\r\n\x1b[33mEmbedded terminal unavailable\x1b[0m — {why}\r\n")
             await websocket.close(code=4403)
             return
+        if kind == "terminal" and sid in _WRITERS:
+            # Một người ghi mỗi transcript: client đợi rồi tự nối lại (xem connectTerm ở app.js).
+            busy = "Agent is working" if _WRITERS[sid]["kind"] == "run" else "Terminal is open in another tab"
+            await websocket.close(code=4409, reason=busy)
+            return
         cwd = (s.get("cwd") or "").strip() or str(Path.home())
         env = dict(os.environ, TERM="xterm-256color", **(extra_env or {}))
         argv = None
@@ -5727,6 +5896,11 @@ def build_app():
 
         loop = asyncio.get_running_loop()
         _PTYS[term.pid] = {"session": sid, "kind": kind}
+        # Chỉ terminal mở ĐÚNG hội thoại của card mới là người ghi; phiên mới (CLI khác engine) thì không.
+        w = terminal_writer(term) if kind == "terminal" and any(
+            x in argv for x in (sid, s.get("resume_id")) if x) else None
+        if w:
+            _WRITERS[sid] = w
 
         async def pump_out():
             while True:
@@ -5752,6 +5926,8 @@ def build_app():
                     # không được reset trần ping-pong.
                     if is_user_typing(msg.get("d")):
                         note_human_touch(s.get("name"), s.get("workspace_id"))
+                    if w:
+                        note_terminal_input(w, msg.get("d"))
                     term.write(str(msg.get("d", "")).encode("utf-8"))
                 elif msg.get("t") == "r":
                     try:
@@ -5764,6 +5940,9 @@ def build_app():
             out_task.cancel()
             term.close()
             _PTYS.pop(term.pid, None)
+            if w and _WRITERS.get(sid) is w:
+                del _WRITERS[sid]
+                terminal_closed(w)
 
     async def api_perf(request: Request):
         try:
@@ -6365,6 +6544,20 @@ def build_app():
             return Response("bad status line json\n", status_code=400, media_type="text/plain")
         return Response(line + "\n", media_type="text/plain")
 
+    async def api_turn(request: Request):
+        """PUT từ hook lượt của terminal claude (TURN_HOOKS, curl -T -). Trả rỗng: stdout của hook
+        UserPromptSubmit/SessionStart bị claude chèn vào ngữ cảnh."""
+        try:
+            p = json.loads(await request.body())
+            if not isinstance(p, dict):
+                raise ValueError("not an object")
+        except (TypeError, ValueError):
+            return Response("bad hook json\n", status_code=400, media_type="text/plain")
+        card = _card_of_claude_session(p.get("session_id"))
+        if card:
+            on_turn_hook(card["id"], p)
+        return Response(status_code=204)
+
     async def api_events(request: Request):
         # ?workspace_id= → chỉ nhận event của tenant đó (FE mỗi user mở 1 stream riêng).
         # Bỏ trống = admin view, nhận mọi event. Tồn tại thì mới lọc; không thì trả 404.
@@ -6617,6 +6810,7 @@ def build_app():
         Route("/api/runs/{rid}/events", api_run_events),
         Route("/api/events", api_events),
         Route("/api/meters", api_meters, methods=["PUT"]),
+        Route("/api/turn", api_turn, methods=["PUT"]),
         # Chat tương thích OpenAI cho app ngoài (base_url = http://<host>:<port>/v1)
         Route("/v1/chat/completions", api_chat_completions, methods=["POST"]),
         Route("/v1/models", api_chat_models),
