@@ -240,6 +240,11 @@ def sig_status(sig_id):
     return row["status"] if row else None
 
 
+def finished(sig_id):
+    """Done AND handed to team.after_run: the server marks the signal done first, then calls after_run."""
+    return sig_status(sig_id) == "done" and events(who="after_run", signal=sig_id)
+
+
 class Term:
     """The dashboard's side of /ws/terminal: same JSON frames xterm.js sends."""
 
@@ -303,7 +308,7 @@ async def main():
     await t.type("work=3 user turn\r")
     await until(lambda: events(session="sw-one", who="term", ev="start"))
     s1 = send("sw-one", "case one report")
-    await until(lambda: sig_status(s1) == "done", 25)
+    await until(lambda: finished(s1), 25)
     starts = events(session="sw-one", who="term", ev="start")
     ends = events(session="sw-one", who="term", ev="end")
     case(1, "the user's turn ran its full 3 s, uninterrupted",
@@ -324,7 +329,7 @@ async def main():
     await until(lambda: events(session="sw-two", ev="ready"))
     ids = [send("sw-two", "case two first work=1.5"), send("sw-two", "case two second"),
            send("sw-two", "/compact")]
-    await until(lambda: all(sig_status(i) == "done" for i in ids), 30)
+    await until(lambda: all(finished(i) for i in ids), 30)
     starts = events(session="sw-two", who="term", ev="start")
     ends = events(session="sw-two", who="term", ev="end")
     order = [("first" in e["prompt"]) * 1 + ("second" in e["prompt"]) * 2 + (e["prompt"] == "/compact") * 3
@@ -355,7 +360,7 @@ async def main():
     case(3, "it opened by itself once the run ended",
          t.code is None and run_end and term_open and term_open[0]["t"] >= run_end[0]["t"],
          (run_end, term_open))
-    await until(lambda: sig_status(s3) == "done")
+    await until(lambda: finished(s3))
     await t.close()
 
     # 5 · a long multi-line report arrives in one piece
@@ -364,7 +369,7 @@ async def main():
     report = "\n".join(f"line {i:04d} of the long report — với chữ có dấu, tabs\tand \"quotes\""
                        for i in range(400))
     s5 = send("sw-five", report)
-    await until(lambda: sig_status(s5) == "done", 25)
+    await until(lambda: finished(s5), 25)
     starts = events(session="sw-five", who="term", ev="start")
     want = so.inject_prompt(so.get_session("sw-five"), report, "human", 1)
     case(5, f"one prompt, byte-for-byte the background prompt ({len(want)} chars)",
@@ -382,7 +387,7 @@ async def main():
          not events(session="sw-six", ev="paste_start") and sig_status(s6) == "pending"
          and not events(session="sw-six", who="run"), events(session="sw-six"))
     await t.type(" finished\r")
-    await until(lambda: sig_status(s6) == "done", 25)
+    await until(lambda: finished(s6), 25)
     prompts = [e["prompt"] for e in events(session="sw-six", who="term", ev="start")]
     pastes = events(session="sw-six", ev="paste_start")
     case(6, "the draft went in as typed, then the message alone",
@@ -392,7 +397,7 @@ async def main():
 
     # 7 · no terminal open: background runs as before; closing a terminal hands its queue back
     s7 = send("sw-seven", "case seven alone")
-    await until(lambda: sig_status(s7) == "done")
+    await until(lambda: finished(s7))
     ar = events(who="after_run", signal=s7)
     case(7, "a background run handled it, after_run got its result",
          events(session="sw-seven", who="run", ev="end") and ar and ar[0]["result"] == "bg reply", ar)
@@ -400,12 +405,12 @@ async def main():
     await until(lambda: events(session="sw-seven", ev="ready"))
     await t.type("draft")
     s7b = send("sw-seven", "case seven queued")
-    await asyncio.sleep(2.5)
-    queued = {s["id"]: s.get("term_queue") for s in httpx.get(BASE + "/api/sessions").json()}
-    case(7, "the card reports 1 message waiting for the open terminal", queued.get("sw-seven") == 1,
-         queued.get("sw-seven"))
+    def term_queue():
+        return next((s.get("term_queue") for s in httpx.get(BASE + "/api/sessions").json() if s["id"] == "sw-seven"), None)
+    await until(lambda: term_queue() == 1, 10)
+    case(7, "the card reports 1 message waiting for the open terminal", term_queue() == 1, term_queue())
     await t.close()
-    await until(lambda: sig_status(s7b) == "done")
+    await until(lambda: finished(s7b))
     runs = events(session="sw-seven", who="run", ev="start")
     case(7, "closing the terminal sends the queued signal to a background run",
          len(runs) == 2 and "case seven queued" in runs[1]["prompt"]
@@ -415,7 +420,7 @@ async def main():
     t = await Term().open("sw-agy")
     await until(lambda: events(session="sw-agy", ev="ready"))
     s8 = send("sw-agy", "case eight for agy work=2")
-    await until(lambda: sig_status(s8) == "done", 25)
+    await until(lambda: finished(s8), 25)
     try:
         await asyncio.wait_for(t.drain, 5)
     except asyncio.TimeoutError:
