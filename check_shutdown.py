@@ -15,6 +15,7 @@ chết trong hạn.
     python3 check_shutdown.py
 """
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -47,7 +48,8 @@ with socket.socket() as s:
     PORT = s.getsockname()[1]
 
 tmp = tempfile.mkdtemp()
-env = {**os.environ, "ORCH_PORT": str(PORT), "ORCH_HOST": "127.0.0.1",
+# Own HOME: the DB lives in ~/.session_orch_db, and a shared one is deleted under a concurrent run.
+env = {**os.environ, "HOME": tmp, "USERPROFILE": tmp, "ORCH_PORT": str(PORT), "ORCH_HOST": "127.0.0.1",
        "ORCH_DB": "check_shutdown", "ORCH_DRY_RUN": "1",
        "ORCH_WORKSPACES_ROOT": os.path.join(tmp, "ws"),
        "ORCH_CLAUDE_CONFIG": os.path.join(tmp, "claude.json")}
@@ -99,8 +101,6 @@ try:
 finally:
     if proc.poll() is None:
         proc.kill()
-    db = Path.home() / ".session_orch_db" / "check_shutdown.db"
-    for sfx in ("", "-wal", "-shm"):
-        Path(str(db) + sfx).unlink(missing_ok=True)
+    shutil.rmtree(tmp, ignore_errors=True)
 
 print("\nall checks passed")
