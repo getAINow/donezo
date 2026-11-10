@@ -87,7 +87,8 @@ WS_B = so.create_workspace("other")["id"]
 PROJ = TMP / "proj-lead"
 PROJ.mkdir()
 (PROJ / "secret.txt").write_text("the director's files\n", encoding="utf-8")
-for sid, name in (("dir-1", "lead"), ("dir-2", "peer"), ("dir-3", "third"), ("dir-4", "gone")):
+for sid, name in (("dir-1", "lead"), ("dir-2", "peer"), ("dir-3", "third"), ("dir-4", "gone"),
+                  ("dir-5", "maker"), ("dir-6", "maker2")):
     so.register_session(sid, name, cwd=str(PROJ), model="", permission_mode="bypassPermissions",
                         workspace_id=WS)
 so.register_session("sub-x", "sub-x-feature", cwd=str(PROJ), model="", workspace_id=WS)
@@ -194,10 +195,6 @@ async def case_a():
               r.status_code == 200 and (s.get("enabled"), s.get("brief"), s.get("every_days"),
                                         s.get("next_run_at")) == (0, "", 7, "") and r.json()["last"] is None,
               r.text)
-        r = await c.post("/api/planner", json={"workspace_id": WS, "owner_id": "dir-1", "enabled": True})
-        check("a) switching on without a brief is refused, readably",
-              r.status_code == 400 and "brief" in r.json().get("error", "")
-              and not planner.settings("dir-1")["enabled"], r.text)
         bad = [await c.post("/api/planner", json={"workspace_id": WS, "owner_id": "dir-1", "every_days": n})
                for n in (0, 91, "x")]
         check("a) every_days outside 1–90 is refused", all(x.status_code == 400 for x in bad),
@@ -465,8 +462,81 @@ async def case_i():
           {"url", "decision", "decision_reason"} <= cols and row == ("kept", "", "", ""), f"{cols} {row}")
 
 
+def asks(sid):
+    return team._rows("SELECT message FROM signals WHERE to_session = ? AND message LIKE '[PLANNER BRIEF]%' "
+                      "ORDER BY id", (sid,))
+
+
+def scouts(owner):
+    return team._rows("SELECT * FROM subtasks WHERE director_id = ? AND kind = 'scout' ORDER BY rowid", (owner,))
+
+
+async def case_j():
+    """The agent writes the brief: asked on switch-on, Scout now and the button; the run waits for it."""
+    past = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    async with client() as c:
+        r = await c.post("/api/planner", json={"workspace_id": WS, "owner_id": "dir-5", "enabled": True})
+        s, a = planner.settings("dir-5"), asks("dir-5")
+        check("j1) switching on with no brief is saved ON and asks the agent once",
+              r.status_code == 200 and s["enabled"] == 1 and len(a) == 1, f"{r.text} {a}")
+        m = a[0]["message"] if a else ""
+        check("j1) the ask names planner_brief, the agent, and says to keep secrets out",
+              'planner_brief(from_role="maker"' in m and "secrets" in m and "file paths" in m, m)
+
+        await c.post("/api/planner", json={"workspace_id": WS, "owner_id": "dir-5", "enabled": True})
+        team._exec("UPDATE planners SET next_run_at = ? WHERE owner_id = 'dir-5'", (past,))
+        got = [planner.run_due(), planner.run_due()]
+        check("j2) switching on again and two due ticks: no second ask, no scout, the due run is kept",
+              len(asks("dir-5")) == 1 and got == [[], []] and not scouts("dir-5")
+              and planner.settings("dir-5")["next_run_at"] == past, f"{got} {asks('dir-5')}")
+
+        future = (datetime.now() + timedelta(days=3)).isoformat(timespec="seconds")
+        team._exec("UPDATE planners SET next_run_at = ? WHERE owner_id = 'dir-5'", (future,))   # not due: the wait starts it
+        res = await signal_mcp.planner_brief(from_role="maker", text="Brief M: a recipe app for cooks")
+        if not scouts("dir-5"):
+            planner.run_due()
+        sc = scouts("dir-5")
+        first = team._row("SELECT message FROM signals WHERE to_session = ? ORDER BY id LIMIT 1",
+                          (sc[0]["session_id"],)) if sc else None
+        check("j3) once the agent saves the brief, one scout starts with it in its first message",
+              res == "Brief saved." and len(sc) == 1 and first and "Brief M: a recipe app" in first["message"]
+              and "## Product brief\n" in first["message"], f"{res} {sc} {first}")
+
+        r = await c.post("/api/planner/scout", json={"workspace_id": WS, "owner_id": "dir-6"})
+        check("j4) Scout now with no brief on an OFF planner asks once and starts nothing yet",
+              r.status_code == 200 and len(asks("dir-6")) == 1 and not scouts("dir-6")
+              and not planner.settings("dir-6")["enabled"], r.text)
+        await c.post("/api/planner/scout", json={"workspace_id": WS, "owner_id": "dir-6"})
+        planner.save(WS, "dir-6", brief="Brief six: a chess trainer")
+        planner.run_due()
+        check("j4) after the brief is saved exactly one scout runs and the planner stays off",
+              len(asks("dir-6")) == 1 and len(scouts("dir-6")) == 1 and not planner.settings("dir-6")["enabled"],
+              f"{scouts('dir-6')} {planner.settings('dir-6')}")
+
+        n = len(scouts("dir-6"))
+        r = await c.post("/api/planner/ask", json={"workspace_id": WS, "owner_id": "dir-6"})
+        a = asks("dir-6")
+        check("j5) the button asks again, with the current brief, and starts no scout",
+              r.status_code == 200 and len(a) == 2 and "Brief six: a chess trainer" in a[-1]["message"]
+              and len(scouts("dir-6")) == n, f"{r.text} {a}")
+
+        scout_sid = sc[0]["session_id"] if sc else ""
+        res = [await c.post("/api/planner/ask", json={"workspace_id": WS, "owner_id": x})
+               for x in ("sub-x", scout_sid)]
+        errs = []
+        for x in res:
+            try:
+                errs.append(x.json().get("error", ""))
+            except ValueError:
+                errs.append("")
+        on = [planner.save(WS, x, enabled=True) for x in ("sub-x", scout_sid)]
+        check("j6) a sub-agent and a scout session are never asked",
+              all("no planner" in e for e in errs) and all(o.get("error") for o in on)
+              and not asks("sub-x") and not asks(scout_sid), f"{errs} {on}")
+
+
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i):
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j):
         await case()
 
 

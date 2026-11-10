@@ -174,10 +174,13 @@ back one you rejected; you still can.</p>
 a fresh Claude session that searches the web for trending projects, techniques and industry practice that fit the
 agent's product, and files at most three proposals on that agent's board. Zero is a normal result.</p>
 <ul>
-  <li>Write the product brief (what the product is, who it is for, what matters now), pick every how many days
-    (1 to 90), and switch it on. Switching on needs a brief, and schedules the first run that many days out.
+  <li>Pick every how many days (1 to 90) and switch it on. The first run is scheduled that many days out.
     <span class="ui">Scout now</span> runs it at once. Any run moves the next one a full interval later.</li>
-  <li>The agent can keep the brief current itself with <code>planner_brief</code>.</li>
+  <li>The agent writes the product brief (what the product is, who it is for, what matters now) with
+    <code>planner_brief</code>. With no brief yet, switching on or <span class="ui">Scout now</span> asks the agent
+    to write it, and the run starts once it is saved. <span class="ui">Ask the agent to write it</span> asks again.
+    You can edit the brief and click <span class="ui">Save</span>.</li>
+  <li>Parts of the brief are typed into public web searches, so keep secrets and private details out of it.</li>
   <li>What the scout gets: the brief, the titles of the board's open cards, the proposals it already made (so it does
     not repeat them) and your past decisions on them with your reasons. Like every Claude session, it also loads
     your personal <code>~/.claude/CLAUDE.md</code> if you have one: keep secrets out of it.</li>

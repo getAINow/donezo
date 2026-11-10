@@ -1592,14 +1592,16 @@
             <span id="pl-next" class="hint"></span>
           </div>
           <textarea id="pl-brief" maxlength="4000" oninput="plannerTyped()" aria-label="Product brief"
-            placeholder="Product brief: what this agent's product is, who it is for, what matters now"></textarea>
+            placeholder="Product brief. The agent writes it when you switch the planner on. You can edit it."></textarea>
           <div class="pl-row">
             <button class="primary" type="submit" title="Save the brief and the interval">Save</button>
             <button id="pl-scout" class="secondary" type="button" onclick="plannerScout()"
               title="Start one planner run now">Scout now</button>
+            <button id="pl-ask" class="secondary" type="button" onclick="plannerAsk()"
+              title="Ask the agent to write or update the brief">Ask the agent to write it</button>
             <span id="pl-last" class="hint"></span>
           </div>
-          <span class="hint">The planner only sees this brief and your card titles. It can search the web and file proposals; it cannot read your files or act.</span>
+          <span class="hint">The agent writes this brief and you can edit it. Parts of it go into web searches, so keep private things out. The planner only sees this brief and your card titles. It can search the web and file proposals; it cannot read your files or act.</span>
           <span id="pl-msg" class="hint"></span>
         </form>
         <form id="bd-add" class="panel page-form" onsubmit="boardAdd(event)" aria-label="Add a card">
