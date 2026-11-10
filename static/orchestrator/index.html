@@ -778,6 +778,12 @@
   #bd-cols.bd-five { grid-template-columns: repeat(5, minmax(180px, 1fr)); }
   .tb-dot.proposed { background: var(--amber-ink); }
   .bd-link { color: var(--accent); }
+  #bd-planner { margin-bottom: 14px; }
+  .pl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pl-row .hint { margin: 0; }
+  .pl-switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  #bd-planner .pl-switch input { width: auto; }
+  #bd-planner #pl-every { width: 64px; }
 
   /* Khung + form dùng chung của các tab dạng trang (Team). */
   .page-form { display: grid; gap: 8px; padding: 12px 15px; }
@@ -1574,6 +1580,28 @@
           <label for="bd-agent" class="hint">Board of</label>
           <select id="bd-agent" class="mini" onchange="boardPick(this.value)" title="Whose board to show"></select>
         </div>
+        <!-- Planner của agent đang chọn (planner.py): plannerLoad() nạp, plannerSave()/plannerScout() ghi. -->
+        <form id="bd-planner" class="panel page-form" onsubmit="plannerSave(event)" aria-label="Planner" hidden>
+          <div class="pl-row">
+            <label class="pl-switch"><input type="checkbox" id="pl-on" role="switch" onchange="plannerSave()">
+              <b>Planner</b> <span id="pl-state" class="hint">Off</span></label>
+            <label class="hint" for="pl-every">every</label>
+            <input id="pl-every" class="mini" type="number" min="1" max="90" step="1" oninput="plannerTyped()"
+              aria-label="Run every N days" title="Days between two scheduled runs (1–90)">
+            <span class="hint">days</span>
+            <span id="pl-next" class="hint"></span>
+          </div>
+          <textarea id="pl-brief" maxlength="4000" oninput="plannerTyped()" aria-label="Product brief"
+            placeholder="Product brief: what this agent's product is, who it is for, what matters now"></textarea>
+          <div class="pl-row">
+            <button class="primary" type="submit" title="Save the brief and the interval">Save</button>
+            <button id="pl-scout" class="secondary" type="button" onclick="plannerScout()"
+              title="Start one planner run now">Scout now</button>
+            <span id="pl-last" class="hint"></span>
+          </div>
+          <span class="hint">The planner only sees this brief and your card titles. It can search the web and file proposals; it cannot read your files or act.</span>
+          <span id="pl-msg" class="hint"></span>
+        </form>
         <form id="bd-add" class="panel page-form" onsubmit="boardAdd(event)" aria-label="Add a card">
           <div class="two">
             <input id="bd-title" maxlength="200" placeholder="New card for To do" aria-label="Card title" required>

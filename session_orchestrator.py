@@ -421,6 +421,8 @@ def init_db():
     team.migrate(conn)
     import board
     board.migrate(conn)
+    import planner
+    planner.migrate(conn)
     conn.commit()
     conn.close()
 
@@ -2643,6 +2645,25 @@ def _claude_model_effort_flags(session):
     return flags + ["--effort", effort] if effort else flags
 
 
+def _planner_flags(session):
+    """Cờ của một lượt planner (planner.py): nó đọc trang web KHÔNG tin được, nên chỉ có WebSearch,
+    WebFetch và đúng một tool signal (board_propose); không MCP nào khác của người dùng, không bao giờ
+    bypass, không theo permission mode của director. None = không phải planner: lệnh như cũ."""
+    import planner
+    if session.get("team_role") != planner.ROLE:
+        return None
+    # File chứ không phải chuỗi JSON trong argv: nháy JSON trên command line Windows dễ vỡ.
+    # Header X-Orch-Planner: signal_mcp từ chối mọi tool khác cho request mang nó, from_role ghi gì cũng vậy.
+    signal = {"type": "http", "url": _builtin_url("/signal/mcp"), "headers": {"X-Orch-Planner": "1"}}
+    f = DB_DIR / f"planner-mcp-{ORCH_PORT}.json"
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"mcpServers": {"signal": signal}}), encoding="utf-8")
+    return ["--tools", "WebSearch WebFetch", "--strict-mcp-config", "--mcp-config", str(f),
+            "--permission-mode", "dontAsk",
+            "--allowedTools", f"WebSearch WebFetch mcp__signal__{planner.TOOL}",
+            "--max-budget-usd", planner.MAX_BUDGET_USD]
+
+
 async def _run_claude(session, prompt, on_event=None, dry_run=False):
     """Chạy `claude -p --resume <id>` với allowlist. Trả dict kết quả.
 
@@ -2675,11 +2696,15 @@ async def _run_claude(session, prompt, on_event=None, dry_run=False):
         cmd.append("--verbose")  # bắt buộc cho stream-json trong -p
         if STREAM_PARTIAL:
             cmd.append("--include-partial-messages")
-    if allowed:
-        cmd += ["--allowedTools", " ".join(allowed)]
-    perm_mode = session.get("permission_mode") or DEFAULT_PERMISSION_MODE
-    if perm_mode:
-        cmd += ["--permission-mode", perm_mode]
+    sealed = _planner_flags(session)
+    if sealed is not None:
+        cmd += sealed
+    else:
+        if allowed:
+            cmd += ["--allowedTools", " ".join(allowed)]
+        perm_mode = session.get("permission_mode") or DEFAULT_PERMISSION_MODE
+        if perm_mode:
+            cmd += ["--permission-mode", perm_mode]
     cmd += _claude_model_effort_flags(session)
 
     cwd = session.get("cwd") or None
@@ -3798,6 +3823,10 @@ def terminal_argv(session, cli=""):
     Transcript của chính session đã bị CLI dọn mất (claude: cleanupPeriodDays) → _cli_open_argv
     mở lại thay vì để CLI chết; claude giữ nguyên id, agy phải sang phiên mới.
     """
+    import planner
+    if session.get("team_role") == planner.ROLE:
+        # Phiên đọc web không tin được: terminal không mang được bộ cờ niêm phong của _planner_flags.
+        raise ValueError("a planner run cannot be opened as a terminal")
     eng = engine_name_of_session(session)
     sid = session["id"]
     cli = (cli or "").strip().lower()
@@ -4976,6 +5005,7 @@ async def run_loop():
     chạy SONG SONG ngay; signal tới agent đang bận chỉ đợi lock session của agent đó
     (không chặn cả batch như gather trước đây)."""
     print(f"[orchestrator] loop start (dry_run={DRY_RUN}, poll={POLL_INTERVAL}s, db={_db_path()})")
+    import planner
     import team
     swept = time.monotonic()
     while True:
@@ -4983,6 +5013,7 @@ async def run_loop():
             if time.monotonic() - swept >= SWEEP_INTERVAL:
                 swept = time.monotonic()
                 team.sweep_soon()
+                planner.run_due()
             for sig in eligible_signals():
                 if sig["id"] in _inflight:
                     continue
@@ -6724,6 +6755,8 @@ def build_app():
         # Task nền + run dở của đội đã chết cùng tiến trình cũ: kết thúc hoặc kiểm lại (team.py).
         team.reconcile()
         team.sweep_soon()   # worktree của việc đã merge từ lần chạy trước
+        import planner
+        planner.run_due()   # planner nào tới hạn trong lúc server tắt
         async with AsyncExitStack() as stack:
             # Khởi động session manager của từng MCP sub-app (bắt buộc cho /mcp).
             await stack.enter_async_context(signal_app.router.lifespan_context(app))

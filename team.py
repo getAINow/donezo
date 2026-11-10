@@ -47,7 +47,10 @@ PLAYBOOKS = {
     "refactor": ("implement", True),
     "investigate": ("investigate", False),
 }
-SYSTEM_PLAYBOOKS = ("verify", "reflect")
+SYSTEM_PLAYBOOKS = ("verify", "reflect", "scout")
+# Runs the system starts for a director (planner.py: scout): not its sub-agents, no limit slot, no
+# message when they end, not on the Team tab.
+QUIET_KINDS = ("reflect", "scout")
 # Mọi phiên đội (builder, verifier, reflect) chạy đúng model này — không theo director, không theo
 # setting team_models:* cũ (bị bỏ qua). Không đổi model giữa chừng; khó thì nâng effort.
 TEAM_MODEL = "claude-opus-5-5"
@@ -95,7 +98,7 @@ def migrate(conn):
             workspace_id TEXT NOT NULL DEFAULT 'default',
             director_id TEXT NOT NULL,                -- người giao: director, hoặc agent gửi handoff
             session_id TEXT NOT NULL DEFAULT '',      -- người làm
-            kind TEXT NOT NULL DEFAULT 'subagent',    -- subagent | handoff | reflect
+            kind TEXT NOT NULL DEFAULT 'subagent',    -- subagent | handoff | reflect | scout
             playbook TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL DEFAULT '',
             brief TEXT NOT NULL DEFAULT '',
@@ -680,7 +683,7 @@ def _new_id():
 
 
 def _active_count(director_id):
-    r = _row(f"SELECT COUNT(*) n FROM subtasks WHERE director_id = ? AND kind != 'reflect' "
+    r = _row(f"SELECT COUNT(*) n FROM subtasks WHERE director_id = ? AND kind NOT IN ('reflect', 'scout') "
              f"AND status IN ({','.join('?' * len(ACTIVE))})", (director_id, *ACTIVE))
     return r["n"] if r else 0
 
@@ -841,6 +844,9 @@ async def _after_work(st, result):
         if touched:
             return _fail(st, "a read-only sub-agent changed files in your folder (nothing was "
                              "undone — check them): " + "; ".join(touched[:12]))
+    if st["kind"] == "scout":
+        import planner                  # noqa: PLC0415 — planner imports team
+        return planner.after_run(st, report)
     if st["kind"] == "reflect":
         ok = _row("SELECT 1 FROM skill_proposals WHERE subtask_id = ?", (st["id"],))
         if _update(st["id"], _from=("running",), report=report, run_key="",
@@ -945,7 +951,7 @@ def _finish(st):
     """Đóng việc: báo người giao (trừ reflect — kết quả là đề xuất chờ người duyệt), dọn SKILL
     của phiên chạy trong thư mục director."""
     so = _so()
-    if st["kind"] != "reflect":
+    if st["kind"] not in QUIET_KINDS:
         _notify(st, _outcome_msg(st, st["status"] == "passed"))
     if not st["worktree"] and st["kind"] in ("subagent", "reflect"):
         s = so.get_session(st["session_id"]) or {}
@@ -1107,7 +1113,7 @@ def knowledge_graph(workspace_id):
 
 def list_for_director(director_id):
     out = []
-    for st in _rows("SELECT * FROM subtasks WHERE director_id = ? AND kind != 'reflect' "
+    for st in _rows("SELECT * FROM subtasks WHERE director_id = ? AND kind NOT IN ('reflect', 'scout') "
                     "ORDER BY created_at DESC LIMIT 30", (director_id,)):
         v = _verdict(st)
         out.append({"id": st["id"], "title": st["title"], "playbook": st["playbook"],
@@ -1144,7 +1150,7 @@ def cancel(st_id, by_user=False):
                  reason="cancelled by the user" if by_user else "cancelled")
     if st is None:
         return {"error": "it finished in the meantime"}
-    if by_user and st["kind"] != "reflect":
+    if by_user and st["kind"] not in QUIET_KINDS:
         _notify(st, f"[SUB-AGENT CANCELLED] {st_id} · {st['title'] or st['playbook']} was cancelled "
                     f"by the user from the dashboard. Do not reply to this.")
     so.publish({"type": "team", "subtask": st_id, "status": "cancelled",
@@ -1156,7 +1162,7 @@ async def reverify(st_id):
     st = get_subtask(st_id)
     if not st:
         return {"error": "not found"}
-    if st["status"] not in ("failed", "passed") or st["kind"] == "reflect" or not st["session_id"]:
+    if st["status"] not in ("failed", "passed") or st["kind"] in QUIET_KINDS or not st["session_id"]:
         return {"error": "only a finished subtask can be verified again"}
     if st["discarded"] or st["cleaned"]:
         return {"error": "its worktree was discarded" if st["discarded"] else "it was merged and cleaned up"}
@@ -1212,7 +1218,7 @@ def reconcile():
         live = sig and sig["status"] in ("pending", "approved")
         if st["status"] == "queued":
             _fail(st, "the orchestrator restarted before it started — delegate it again",
-                  notify=st["kind"] != "reflect")
+                  notify=st["kind"] not in QUIET_KINDS)
         elif st["status"] == "verifying" and not live:
             redo.append(st["id"])
         elif not live:
@@ -1536,7 +1542,7 @@ def _subtask_page(workspace_id, sessions, page):
     """Một trang subtask cho tab Team + số đếm SQL trên CẢ tập đã lọc (không theo trang) — cột và
     hàng số liệu hiện tổng thật, không phải số card đã nạp."""
     q = ",".join("?" * len(ACTIVE))
-    base, args = "workspace_id = ? AND kind != 'reflect'", [workspace_id]
+    base, args = "workspace_id = ? AND kind NOT IN ('reflect', 'scout')", [workspace_id]
     givers = [r["director_id"] for r in _rows(f"SELECT DISTINCT director_id FROM subtasks WHERE {base}",
                                                tuple(args))]
     if page["director_id"]:
@@ -1566,7 +1572,8 @@ def overview(workspace_id, page=None):
         paged = _subtask_page(workspace_id, sessions, page)
         dec_lim, dec_off = page["dec_limit"], page["dec_offset"]
     else:
-        subs = _rows("SELECT * FROM subtasks WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 200",
+        subs = _rows("SELECT * FROM subtasks WHERE workspace_id = ? AND kind != 'scout' "
+                     "ORDER BY created_at DESC LIMIT 200",
                      (workspace_id,))
         paged = {"subtasks": _items(subs, sessions)}
         dec_lim, dec_off = 60, 0
@@ -1628,14 +1635,14 @@ def director_view(director_id, limit=12):
         return {"error": "not found"}
     ws = d.get("workspace_id") or so.DEFAULT_WORKSPACE
     q = ",".join("?" * len(ACTIVE))
-    subs = _rows(f"SELECT * FROM subtasks WHERE director_id = ? AND kind != 'reflect' AND "
+    subs = _rows(f"SELECT * FROM subtasks WHERE director_id = ? AND kind NOT IN ('reflect', 'scout') AND "
                  f"(status IN ({q}) OR id IN (SELECT id FROM subtasks WHERE director_id = ? AND "
-                 f"kind != 'reflect' AND status NOT IN ({q}) ORDER BY updated_at DESC LIMIT ?)) "
+                 f"kind NOT IN ('reflect', 'scout') AND status NOT IN ({q}) ORDER BY updated_at DESC LIMIT ?)) "
                  f"ORDER BY created_at DESC", (director_id, *ACTIVE, director_id, *ACTIVE, limit))
     sessions = {s["id"]: s for s in so.list_sessions() if s.get("workspace_id") == ws}
     decisions = _rows("SELECT * FROM team_decisions WHERE session_id = ? ORDER BY id DESC LIMIT 5",
                       (director_id,))
-    total = _row("SELECT COUNT(*) n FROM subtasks WHERE director_id = ? AND kind != 'reflect'",
+    total = _row("SELECT COUNT(*) n FROM subtasks WHERE director_id = ? AND kind NOT IN ('reflect', 'scout')",
                  (director_id,))
     return {"subtasks": _items(subs, sessions), "decisions": decisions,
             "total": total["n"] if total else 0, "max_active": MAX_ACTIVE, "now": so._now()}
@@ -1647,7 +1654,7 @@ def counts_by_director():
     q = ",".join("?" * len(ACTIVE))
     return {r["director_id"]: {"active": r["active"] or 0, "total": r["total"]}
             for r in _rows(f"SELECT director_id, COUNT(*) total, SUM(status IN ({q})) active "
-                           f"FROM subtasks WHERE kind != 'reflect' GROUP BY director_id", ACTIVE)}
+                           f"FROM subtasks WHERE kind NOT IN ('reflect', 'scout') GROUP BY director_id", ACTIVE)}
 
 
 # ─── HTTP routes (build_app gắn vào) ─────────────────────────────────────────
@@ -1729,8 +1736,10 @@ def routes():
         return reply(decide_proposal(int(request.path_params["pid"]), bool(b.get("approve"))))
 
     import board                                    # noqa: PLC0415
+    import planner                                  # noqa: PLC0415
     return [
         *board.routes(body, reply, ws_of),
+        *planner.routes(body, reply, ws_of),
         Route("/api/team", api_team),
         Route("/api/knowledge", api_knowledge),
         Route("/api/team/director/{sid}", api_director),

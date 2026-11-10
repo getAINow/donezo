@@ -39,7 +39,35 @@ async def lifespan(server):
     yield {}
 
 
-mcp = FastMCP("Agent-Signal", lifespan=lifespan, host=HOST, port=PORT)
+def _is_planner(server, arguments):
+    """A planner run (planner.py) reads untrusted web pages. Its own MCP config marks every request
+    with X-Orch-Planner (the model cannot change that), and its session name is refused too."""
+    try:
+        req = server.get_context().request_context.request
+        if req is not None and req.headers.get("x-orch-planner"):
+            return True
+    except (LookupError, ValueError, AttributeError):
+        pass                            # called outside an HTTP request (in-process, checks)
+    if not _INPROC:
+        return False
+    import planner
+    import team
+    name = str((arguments or {}).get("from_role") or "")
+    return bool(name and team._row("SELECT 1 FROM sessions WHERE name = ? AND team_role = ?",
+                                   (name, planner.ROLE)))
+
+
+class _SignalMCP(FastMCP):
+    async def call_tool(self, name, arguments):
+        """Every tool passes here, so a tool added later cannot forget the planner seal."""
+        import planner
+        if name != planner.TOOL and _is_planner(self, arguments):
+            from mcp.types import TextContent
+            return [TextContent(type="text", text=f"⛔ a planner run can only call {planner.TOOL}.")]
+        return await super().call_tool(name, arguments)
+
+
+mcp = _SignalMCP("Agent-Signal", lifespan=lifespan, host=HOST, port=PORT)
 
 
 def _sender_workspace(orch, from_role: str = "", workspace_id: str = ""):
@@ -441,6 +469,39 @@ async def board_update(from_role: str, card_id: int, status: str = "", title: st
     if res.get("error"):
         return "⛔ not one of your cards" if res["error"] == "not found" else f"⛔ {res['error']}"
     return f"Card {res['id']}: {res['status']} · {res['title']}"
+
+
+@mcp.tool()
+async def planner_brief(from_role: str, text: str = "", workspace_id: str = ""):
+    """Your planner's product brief: what the product is, who it is for, what matters now. A planner
+    run sees only this brief and your card titles when it searches the web for ideas. Empty text =
+    read it; text = replace it (at most 4000 characters). Keep it current."""
+    board, ws, me, err = _board_owner(from_role, workspace_id)
+    if err:
+        return err
+    import planner
+    if not text.strip():
+        cur = planner.settings(me["id"])
+        return cur["brief"] or "No brief yet. Write one with planner_brief(text=...)."
+    res = planner.save(ws, me["id"], brief=text)
+    return f"⛔ {res['error']}" if res.get("error") else "Brief saved."
+
+
+@mcp.tool()
+async def board_propose(from_role: str, subtask_id: str, key: str, title: str, body: str, url: str,
+                        workspace_id: str = ""):
+    """Planner runs only: file one proposal on the board of the agent you scout for. At most 3 per
+    run; url (http/https) is the page the idea comes from. The user approves or rejects it.
+
+    Args:
+        key: the key given in your [SCOUT] task message.
+        body: in your own words — What it is / Why it fits this product / Smallest useful version /
+              Cost and risk.
+    """
+    if not _INPROC:
+        return "Team tools need the orchestrator's built-in signal server (/signal/mcp)."
+    import planner
+    return planner.propose(from_role, subtask_id, key, title, body, url)
 
 
 @mcp.tool()

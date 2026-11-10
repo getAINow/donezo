@@ -441,6 +441,25 @@ if ("Object.entries(HOME.proposed)" not in JS or "openTeam('${esc(ws)}', 'board'
     gaps.add("Home needs one item per workspace with waiting proposals that opens its Board tab")
 check("proposals wait for the user: Proposed column, Approve/Reject, safe link, counts", gaps,
       "a proposal cannot be decided, a javascript: url becomes a link, or nobody sees it waiting")
+# 23b · Planner của agent đang chọn: panel riêng #bd-planner ngay sau .team-head của tab Board.
+gaps = set()
+bd = HTML[HTML.index('<div id="tab-board" hidden>'):HTML.index('<div id="bd-cols"')]
+if 'id="bd-planner"' not in bd or bd.index('class="team-head"') > bd.index('id="bd-planner"'):
+    gaps.add("#bd-planner must sit inside #tab-board, right after .team-head")
+for needle, what in (('id="pl-on" role="switch" onchange="plannerSave()"', "the on/off switch"),
+                     ('id="pl-brief" maxlength="4000"', "the brief"),
+                     ('id="pl-every" class="mini" type="number" min="1" max="90"', "the interval"),
+                     ('onsubmit="plannerSave(event)"', "Save"),
+                     ('id="pl-scout" class="secondary" type="button" onclick="plannerScout()"', "Scout now"),
+                     ('it cannot read your files or act.', "the hint line")):
+    if needle not in bd:
+        gaps.add(f"#bd-planner needs {what}")
+if "plannerLoad().catch(" not in JS[JS.index("async function boardLoad("):JS.index("function bdCard(")]:
+    gaps.add("boardLoad must load the planner panel")
+if '"Scouting…" : "Scout now"' not in JS:
+    gaps.add("Scout now must show a running state")
+check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now", gaps,
+      "the planner cannot be switched on, scheduled or run from the dashboard")
 
 # Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người
 # dùng đang gõ khi thấy signal/run, và khoá tới khi bấm 🔄 — chỉ chạy khi card đang hiện trên màn hình.

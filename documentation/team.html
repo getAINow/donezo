@@ -168,6 +168,26 @@ start a proposal, not even the agent whose board it is on.</p>
     workspace that has some under <span class="ui">Needs you</span>; <span class="ui">Open Board</span> takes you there.</li>
 </ul>
 
+<h3 id="planner">Planner</h3>
+<p>Above the columns, each agent has a <span class="ui">Planner</span>. Switched on, it runs a scout every few days:
+a fresh Claude session that searches the web for trending projects, techniques and industry practice that fit the
+agent's product, and files at most three proposals on that agent's board. Zero is a normal result.</p>
+<ul>
+  <li>Write the product brief (what the product is, who it is for, what matters now), pick every how many days
+    (1 to 90), and switch it on. Switching on needs a brief, and schedules the first run that many days out.
+    <span class="ui">Scout now</span> runs it at once. Any run moves the next one a full interval later.</li>
+  <li>The agent can keep the brief current itself with <code>planner_brief</code>.</li>
+  <li>What the scout gets: the brief, the titles of the board's open cards, the proposals it already made (so it does
+    not repeat them) and your past decisions on them with your reasons. Like every Claude session, it also loads
+    your personal <code>~/.claude/CLAUDE.md</code> if you have one: keep secrets out of it.</li>
+  <li>What it can do: search the web, read pages, and file proposals. It runs in an empty folder, not the agent's
+    project; it has no shell and no file tools, none of your other MCP servers, and no signal tool except filing a
+    proposal. It cannot read your files, message agents, or start work.</li>
+  <li>Only you approve a proposal. Approved proposals become To do cards; the agent never approves its own.</li>
+</ul>
+<p>The panel shows when the next run is due and how the last one went: when, its status, how many proposals it filed,
+the tokens it used, and why it failed if it did.</p>
+
 <h2 id="decisions">Decision log</h2>
 <p><span class="ui">Why the director chose this</span> is a list, newest first, of the decisions the director and
 sub-agents recorded: what they chose, why, and sometimes <span class="ui">Evidence</span> you can expand. Decisions about one
