@@ -84,6 +84,10 @@ and fill in <span class="ui">Report the result to</span>, <span class="ui">Playb
 <p>A <em>worktree</em> is a separate copy of your project on its own branch, named <code>orch/&lt;id&gt;</code>. If the
 director's folder is not a git repository, a sub-agent has no worktree and shares that folder; its card says
 <span class="ui">no worktree</span>.</p>
+<p>Once a finished sub-agent's branch is merged into another local branch of the same repository, Donezo removes its
+worktree and branch by itself (at startup, after each task ends, and every 10 minutes); its card then says
+<span class="ui">merged · cleaned up</span>. A worktree with uncommitted files, or a branch that is not merged, is
+left alone. A squash merge is not recognised, so use <span class="ui">Discard</span> for those.</p>
 
 <h2 id="verifier">The verifier</h2>
 <p>When a sub-agent ends its turn, Donezo starts a brand-new agent, the <em>verifier</em>, to check the

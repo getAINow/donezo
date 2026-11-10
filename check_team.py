@@ -338,6 +338,104 @@ async def case_director_line():
           and items[EFF["a"][0]]["effort_line"] == "effort: high", str({k: v["effort_line"] for k, v in items.items()}))
 
 
+async def case_sweep():
+    """Merged sub-agent worktrees are swept; everything that could still hold work is not."""
+    def repo_of(label):
+        repo = TMP / f"sweep-{label}"
+        repo.mkdir()
+        git("init", "-q", "-b", "main", cwd=repo)
+        git("config", "user.email", "dev@example.com", cwd=repo)
+        git("config", "user.name", "Dev", cwd=repo)
+        (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+        git("add", "-A", cwd=repo)
+        git("commit", "-q", "-m", "init", cwd=repo)
+        return repo
+
+    def task(repo, status="passed", merge=False):
+        """A finished sub-agent row with its own worktree and one commit, as _start_subagent makes it."""
+        st_id = team._new_id()
+        wt, br, base = team.make_worktree(str(repo), st_id)
+        (Path(wt) / "work.py").write_text(f"# {st_id}\n", encoding="utf-8")
+        git("add", "-A", cwd=wt)
+        git("commit", "-q", "-m", st_id, cwd=wt)
+        now = so._now()
+        team._exec("INSERT INTO subtasks (id, director_id, playbook, status, repo, worktree, branch, "
+                   "base_sha, head_sha, created_at, updated_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (st_id, "dir-sweep", "feature", status, str(repo), wt, br, base,
+                    git("rev-parse", "HEAD", cwd=wt), now, now, now))
+        if merge:
+            git("merge", "-q", "--no-ff", "-m", f"merge {br}", br, cwd=repo)
+        return st_id
+
+    def there(st_id):
+        st = team.get_subtask(st_id)
+        return (Path(st["worktree"]).is_dir(), bool(git("branch", "--list", st["branch"], cwd=st["repo"])),
+                st.get("cleaned", 0))
+
+    A, B = repo_of("a"), repo_of("b")
+    merged = task(A, merge=True)
+    unmerged = task(A)
+    dirty = task(A, merge=True)
+    (Path(team.get_subtask(dirty)["worktree"]) / "scratch.txt").write_text("not committed\n", encoding="utf-8")
+    active = {s: task(A, status=s, merge=True) for s in ("running", "verifying")}
+    orphan = TMP / "worktrees" / "myapp"
+    orphan.mkdir(parents=True)
+    (orphan / "keep.txt").write_text("not a subtask\n", encoding="utf-8")
+    empty = team._new_id()    # failed before its first commit: tip == base, which main trivially contains
+    wt, br0, base = team.make_worktree(str(A), empty)
+    team._exec("INSERT INTO subtasks (id, director_id, playbook, status, repo, worktree, branch, base_sha, "
+               "head_sha, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+               (empty, "dir-sweep", "feature", "failed", str(A), wt, br0, base, base, so._now(), so._now()))
+    in_b = task(B, merge=True)
+    only_a = task(B)          # merged nowhere in B; a branch of the same name IS merged in A
+    br = team.get_subtask(only_a)["branch"]
+    git("checkout", "-q", "-b", br, cwd=A)
+    (A / "other.py").write_text("y = 2\n", encoding="utf-8")
+    git("add", "-A", cwd=A)
+    git("commit", "-q", "-m", "same name, other repo", cwd=A)
+    git("checkout", "-q", "main", cwd=A)
+    git("merge", "-q", "--no-ff", "-m", "merge same name", br, cwd=A)
+
+    gone = team.sweep_merged()
+    check("sweep a) a --no-ff merged task: worktree folder and branch removed, row marked cleaned",
+          there(merged) == (False, False, 1) and merged in gone, f"{there(merged)} {gone}")
+    check("sweep b) an unmerged task is kept", there(unmerged) == (True, True, 0), str(there(unmerged)))
+    check("sweep c) a merged task with an untracked file is kept",
+          there(dirty) == (True, True, 0) and (Path(team.get_subtask(dirty)["worktree"]) / "scratch.txt").exists(),
+          str(there(dirty)))
+    check("sweep d) running / verifying tasks are kept", all(there(x) == (True, True, 0) for x in active.values()),
+          str({k: there(v) for k, v in active.items()}))
+    check("sweep b) a task with no commits of its own is kept (Verify again still works)",
+          there(empty) == (True, True, 0), str(there(empty)))
+    check("sweep e) a folder under worktrees/ that no subtask points to is kept",
+          (orphan / "keep.txt").exists())
+    check("sweep f) a second repo's task is judged against its own repo",
+          there(in_b) == (False, False, 1) and there(only_a) == (True, True, 0)
+          and git("rev-parse", "--verify", "-q", br, cwd=A),
+          f"in_b={there(in_b)} only_a={there(only_a)}")
+
+    import httpx
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()),
+                                 base_url="http://test") as c:
+        r = await c.get(f"/api/team/subtasks/{merged}/diff")
+        d = r.json() if r.status_code == 200 else {}
+        check("sweep g) the diff of a cleaned task is empty with the note, no git error",
+              d == {"stat": "", "diff": "", "note": "merged · cleaned up"}, f"{r.status_code} {r.text[:200]}")
+        r = await c.post(f"/api/team/subtasks/{merged}/discard")
+        check("sweep g) discard on a cleaned task is a no-op ok",
+              r.status_code == 200 and r.json().get("ok") and team.get_subtask(merged)["discarded"] == 0,
+              f"{r.status_code} {r.text[:200]}")
+        r = await c.get("/api/team", params={"workspace_id": WS})
+        row = next((x for x in r.json()["subtasks"] if x["id"] == merged), {})
+        check("sweep g) the Team tab gets the cleaned flag", row.get("cleaned") == 1, str(row)[:200])
+
+    rows = lambda: [dict(x) for x in team._rows("SELECT * FROM subtasks WHERE director_id = 'dir-sweep' ORDER BY id")]
+    before = (rows(), sorted(p.name for p in (TMP / "worktrees").iterdir()))
+    again = team.sweep_merged()
+    check("sweep h) a second sweep is a no-op",
+          again == [] and (rows(), sorted(p.name for p in (TMP / "worktrees").iterdir())) == before, str(again))
+
+
 async def main():
     check("team.TEAM_SENDER matches the orchestrator's", team.TEAM_SENDER == so.TEAM_SENDER)
 
@@ -872,6 +970,7 @@ async def main():
             r = await c.get(path)
             check(f"{path} is gone", r.status_code != 200 or "<title>" in r.text, str(r.status_code))
     await drain()
+    await case_sweep()
 
     team.on_session_removed("dir-1")
     check("removing a director cancels its live work",
