@@ -127,10 +127,17 @@ def decide(ws, card_id, approve, reason=""):
 
 
 def update(ws, card_id, owner_id="", status=None, title=None, body=None, note=None, subtask_id=None):
-    """owner_id set = only that agent's card. None/'' leaves a field as it is (body: None only)."""
+    """owner_id set = only that agent's card, and no edit of a proposal or a rejected one's status.
+    None/'' leaves a field as it is (body: None only)."""
     card = get(ws, card_id)
     if not card or (owner_id and card["owner_id"] != owner_id):
         return {"error": "not found"}
+    if owner_id:    # an agent: the user's proposal text and rejection are not its to change
+        if card["status"] == "proposed" and (status or (title is not None and str(title).strip())
+                                             or body is not None):
+            return {"error": "only the user approves or rejects a proposal"}
+        if status and card["decision"] == "rejected" and card["status"] == "dropped":
+            return {"error": "the user rejected this proposal; only the user can bring it back"}
     fields = {}
     if status:
         if status not in STATUSES:
