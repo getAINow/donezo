@@ -401,6 +401,26 @@ if ('kg-looked_up' not in kgjs or 'id="kg-arrow-looked_up"' not in HTML or '.kg-
 check("the Knowledge tab is wired and read-only", gaps,
       "the tab button does nothing, or the read-only graph writes data")
 
+# 23 · Tab Board: backlog của một agent. Thiếu picker / một cột / ô thêm là tab mở ra mà không dùng được.
+gaps = set()
+if not re.search(r'const TABS = \[[^\]]*"board"', JS):
+    gaps.add("TABS must list board")
+if 'id="tab-btn-board"' not in HTML or 'id="tab-board" hidden' not in HTML:
+    gaps.add("index.html needs #tab-btn-board and a hidden #tab-board")
+if '$("tab-board").hidden = name !== "board"' not in tabs or 'name === "board") boardLoad()' not in tabs:
+    gaps.add("switchTab must show #tab-board and load it")
+if 'id="bd-agent"' not in HTML or 'onchange="boardPick(' not in HTML:
+    gaps.add("the Board tab needs its agent picker #bd-agent")
+if 'id="bd-add"' not in HTML or 'id="bd-title"' not in HTML or 'onsubmit="boardAdd(event)"' not in HTML:
+    gaps.add("the Board tab needs the add form (#bd-add, #bd-title)")
+for col in ('["todo", "To do"]', '["in_progress", "In progress"]', '["done", "Done"]', '["dropped", "Dropped"]'):
+    if col not in JS:
+        gaps.add(f"BD_COLS must have the column {col}")
+if "if (boardVisible()) boardLoad()" not in JS:
+    gaps.add("refresh (SSE) must reload an open Board tab")
+check("the Board tab is wired: picker, four columns, add control", gaps,
+      "the tab opens empty, a column is missing, or a card cannot be added")
+
 # Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người
 # dùng đang gõ khi thấy signal/run, và khoá tới khi bấm 🔄 — chỉ chạy khi card đang hiện trên màn hình.
 gaps = set()

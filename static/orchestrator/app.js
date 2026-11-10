@@ -3806,13 +3806,14 @@ async function openSessionRun(sid) {
 }
 window.openSessionRun = openSessionRun;
 
-// ── Tabs: Agents (canvas) / History / Team / Knowledge ──────────────────────
-const TABS = ["agents", "history", "team", "knowledge"];
+// ── Tabs: Agents (canvas) / Board / History / Team / Knowledge ──────────────
+const TABS = ["agents", "board", "history", "team", "knowledge"];
 function switchTab(name) {
   if (!TABS.includes(name)) name = "agents";   // tab đã bỏ (vd 'boards') còn lưu trong localStorage
   $("tab-agents").hidden = name !== "agents";
   $("tab-history").hidden = name !== "history";
   $("tab-team").hidden = name !== "team";
+  $("tab-board").hidden = name !== "board";
   $("tab-knowledge").hidden = name !== "knowledge";
   for (const t of TABS) {
     $("tab-btn-" + t).classList.toggle("active", name === t);
@@ -3820,6 +3821,7 @@ function switchTab(name) {
   }
   if (name === "team") teamLoad().catch((e) => console.error(e));
   if (name === "knowledge") kgLoad().catch((e) => console.error(e));
+  if (name === "board") boardLoad().catch((e) => console.error(e));
   // Transcript đang là cột của Activity: rời tab thì đóng, kẻo drawer kẹt trong tab bị ẩn.
   if (name !== "history" && $("drawer").parentElement === $("tab-history")) closeDrawer();
   // Key theo workspace: hai pane mở cùng lúc dùng chung một key thì đổi tab ở pane này
@@ -4119,6 +4121,7 @@ async function refreshNow() {
     if (teamVisible()) teamLoad().catch(() => {});
     sigHasMore = signals.has_more; runsHasMore = runs.has_more;
     actSignals = signals.items; actRuns = runs.items; actSessions = sessions;
+    if (boardVisible()) boardLoad().catch(() => {});
     renderActivity();
   } catch (e) { console.error(e); if (!PANE) setConn(false); }
 }
@@ -4662,6 +4665,111 @@ function teamDecide(i, approve) {
 }
 window.teamDecide = teamDecide;
 window.teamRender = teamRender;
+
+// ── Board: backlog của một agent ─────────────────────────────────────────────
+// Mỗi agent không phải phiên đội có một board. Board chỉ GIỮ việc; card gắn sub-agent tự đổi cột
+// theo việc đó (board.py). Ở đây chỉ xem, thêm, sửa, chuyển cột và xoá. Id card là số nguyên.
+const BD_COLS = [["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"], ["dropped", "Dropped"]];
+let BOARD = { agents: [], cards: [], open: {} }, bdOwner = "", bdShowDropped = false, bdEdit = 0, bdSeq = 0;
+const boardVisible = () => !$("tab-board").hidden;
+const bdQ = (o) => "?" + new URLSearchParams({ ...(currentWS ? { workspace_id: currentWS } : {}), ...o });
+
+async function boardLoad() {
+  const my = ++bdSeq;
+  const agents = actSessions.filter((s) => !s.team);
+  if (!agents.some((s) => s.id === bdOwner)) {
+    // Mặc định: agent còn nhiều card mở nhất, không ai có thì agent đầu tiên.
+    const { open } = await api("/api/board" + bdQ({}));
+    bdOwner = agents.reduce((b, s) => ((open[s.id] || 0) > (open[b.id] || 0) ? s : b), agents[0] || {}).id || "";
+  }
+  const r = bdOwner ? await api("/api/board" + bdQ({ owner_id: bdOwner })) : { cards: [], open: {} };
+  if (my !== bdSeq) return;
+  BOARD = { agents, cards: r.cards, open: r.open };
+  if (!bdEdit) boardRender();          // đang sửa một card: refresh không được xoá chữ đang gõ
+}
+
+function bdCard(c, who) {
+  if (bdEdit === c.id) return `<div class="st-card"><div class="page-form" style="padding:0">
+      <input id="bd-e-title" maxlength="200" value="${esc(c.title)}" aria-label="Card title">
+      <textarea id="bd-e-body" aria-label="Card details" placeholder="Details (optional)">${esc(c.body)}</textarea>
+      <div class="st-acts"><button class="primary" onclick="boardSave(${c.id})" title="Save the title and details">Save</button>
+        <button class="st-sec" onclick="boardEditOpen(0)" title="Keep the card as it was">Cancel</button></div></div></div>`;
+  const task = c.subtask_id ? `<span class="st-chip mono" title="Linked sub-agent task">${esc(c.subtask_id)}</span>`
+    + badge(esc(c.task_status || "removed"), ST_BADGE[c.task_status]) : "";
+  return `<div class="st-card s-${c.status}" data-card="${c.id}">
+    <div class="st-top"><span class="st-who">Added by ${c.source === "agent" ? esc(who) : "You"}</span>${task}</div>
+    <div class="st-title">${esc(c.title)}</div>
+    ${c.body ? `<div class="bd-body">${esc(c.body)}</div>` : ""}
+    ${c.note ? `<div class="st-note" title="Last automatic change">${esc(c.note)}</div>` : ""}
+    <div class="st-acts">
+      <select class="mini" aria-label="Move to" title="Move to another column" onchange="boardMove(${c.id}, this.value)">${
+        BD_COLS.map(([k, l]) => `<option value="${k}"${k === c.status ? " selected" : ""}>${l}</option>`).join("")}</select>
+      <button class="st-sec" onclick="boardEditOpen(${c.id})" title="Edit the title and details" aria-label="Edit">${ic("edit", "sm")}</button>
+      <button class="st-sec" onclick="boardDelete(${c.id})" title="Delete this card" aria-label="Delete">${ic("trash", "sm")}</button>
+    </div></div>`;
+}
+
+function boardRender() {
+  const { agents, cards, open } = BOARD;
+  const who = agents.find((s) => s.id === bdOwner);
+  $("bd-agent").innerHTML = agents.map((s) => `<option value="${esc(s.id)}"${s.id === bdOwner ? " selected" : ""}>${
+    esc(s.name)}${open[s.id] ? ` · ${open[s.id]} open` : ""}</option>`).join("");
+  $("bd-add").hidden = !who;
+  $("bd-empty").hidden = !!cards.length;
+  $("bd-empty").textContent = who ? `${who.name} has no cards yet. Add work here, or ask the agent to keep `
+    + "a backlog: it adds cards with board_add." : "No agents in this workspace yet.";
+  $("bd-cols").hidden = !cards.length;
+  $("bd-cols").innerHTML = BD_COLS.map(([k, label]) => {
+    const list = cards.filter((c) => c.status === k);
+    const fold = k === "dropped" && !bdShowDropped && list.length;
+    const toggle = k === "dropped" && list.length ? `<button class="secondary" onclick="boardFold()" aria-expanded="${!fold}"
+      title="${fold ? "Show" : "Hide"} dropped cards">${fold ? "Show" : "Hide"}</button>` : "";
+    return `<div class="tb-col" data-col="${k}"><div class="tb-head"><span class="tb-dot ${k}"></span>${label}
+      <span class="n">${list.length}</span>${toggle}</div>${
+      fold ? "" : list.map((c) => bdCard(c, who ? who.name : "agent")).join("") || `<div class="tb-empty">Nothing here</div>`}</div>`;
+  }).join("");
+}
+
+async function boardDo(path, method, body) {
+  try { await api(path, method, body); return true; }
+  catch (e) {
+    let m = String(e);
+    try { m = JSON.parse(m).error || m; } catch { /* text */ }
+    showMsg("bd-msg", m, false);
+    return false;
+  } finally { await boardLoad().catch(() => {}); }
+}
+
+async function boardAdd(e) {
+  e.preventDefault();
+  const title = $("bd-title").value.trim();
+  if (!title) return showMsg("bd-msg", "A card needs a title.", false);
+  if (await boardDo("/api/board" + bdQ({}), "POST", { owner_id: bdOwner, title, body: $("bd-body").value.trim() })) {
+    $("bd-title").value = $("bd-body").value = "";
+    $("bd-msg").textContent = "";
+  }
+}
+function boardPick(id) { bdOwner = id; bdEdit = 0; boardLoad().catch((e) => console.error(e)); }
+function boardFold() { bdShowDropped = !bdShowDropped; boardRender(); }
+function boardMove(id, status) { boardDo(`/api/board/${id}` + bdQ({}), "POST", { status }); }
+function boardEditOpen(id) {
+  bdEdit = id;
+  boardRender();
+  if (id) $("bd-e-title").focus();
+}
+async function boardSave(id) {
+  const title = $("bd-e-title").value.trim();
+  if (!title) return showMsg("bd-msg", "A card needs a title.", false);
+  bdEdit = 0;
+  await boardDo(`/api/board/${id}` + bdQ({}), "POST", { title, body: $("bd-e-body").value.trim() });
+}
+function boardDelete(id) {
+  const c = BOARD.cards.find((x) => x.id === id);
+  if (c && confirm(`Delete the card "${c.title}"?`)) boardDo(`/api/board/${id}` + bdQ({}), "DELETE");
+}
+window.boardAdd = boardAdd; window.boardPick = boardPick; window.boardFold = boardFold;
+window.boardMove = boardMove; window.boardEditOpen = boardEditOpen; window.boardSave = boardSave;
+window.boardDelete = boardDelete;
 
 // ── Live updates (SSE) ───────────────────────────────────────────────────────
 

@@ -244,6 +244,11 @@ def _update(st_id, _from=None, **fields):
     if st:
         so.publish({"type": "team", "subtask": st_id, "status": st["status"],
                     "workspace_id": st["workspace_id"]})
+        import board                    # noqa: PLC0415 — board imports team
+        try:
+            board.on_subtask(st)
+        except Exception as e:  # noqa: BLE001 — a board card must never stop the task itself
+            print(f"[board] {st_id}: {e!r}", flush=True)
     return st
 
 
@@ -680,7 +685,7 @@ def _active_count(director_id):
     return r["n"] if r else 0
 
 
-def spawn_subagent(director_id, playbook, brief, done_when, title="", effort=""):
+def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="", card_id=0):
     """Xếp hàng một sub-agent. Trả {id, status} ngay — dựng phiên (một lượt CLI đầy đủ) chạy nền,
     director không phải chờ. Lỗi lúc dựng: subtask 'failed' kèm lý do + báo director."""
     so = _so()
@@ -708,6 +713,9 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="")
                          f"finish (or cancel one). Fewer, deeper units beat many shallow ones."}
     st_id, now = _new_id(), so._now()
     ws = director.get("workspace_id") or so.DEFAULT_WORKSPACE
+    import board                        # noqa: PLC0415 — board imports team
+    if card_id and (err := board.check_link(ws, card_id, director_id)):
+        return {"error": err}
     effort = start_effort(ws, playbook, effort)
     _exec("INSERT INTO subtasks (id, workspace_id, director_id, kind, playbook, title, brief, "
           "done_when, model, effort_start, effort, status, created_at, updated_at) "
@@ -716,6 +724,9 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="")
            TEAM_MODEL, effort, effort, now, now))
     so.publish({"type": "team", "subtask": st_id, "status": "queued",
                 "workspace_id": director.get("workspace_id")})
+    if card_id:
+        board.update(ws, card_id, subtask_id=st_id)
+        board.on_subtask(get_subtask(st_id))     # → in_progress
     _spawn_bg(_start_subagent(st_id), st_id)
     return {"id": st_id, "status": "queued"}
 
@@ -1717,7 +1728,9 @@ def routes():
         b = await body(request)
         return reply(decide_proposal(int(request.path_params["pid"]), bool(b.get("approve"))))
 
+    import board                                    # noqa: PLC0415
     return [
+        *board.routes(body, reply, ws_of),
         Route("/api/team", api_team),
         Route("/api/knowledge", api_knowledge),
         Route("/api/team/director/{sid}", api_director),

@@ -62,6 +62,9 @@ Never guess a file path, a symbol or an API. Read the real thing first.
 - `record_decision(from_role="open-orch-director", decision=..., reason=..., evidence=...)` — log every
   decision that shapes the work (a design chosen, a unit cut, a finding dismissed). The user
   reviews this trail on the Team tab.
+- The board is your backlog. `board_add(from_role="open-orch-director", title=..., body=...)` work the user
+  asks for that you will not start now; pass its `card_id` to `spawn_subagent` when you start it
+  (the card follows the sub-agent). Asked what is next? Read `board_list` first.
 
 Spawn sub-agents as the last thing in your turn, then end the turn. The orchestrator messages
 you when each one finishes: `[SUB-AGENT PASSED]` after an independent verifier observed

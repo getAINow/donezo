@@ -419,6 +419,8 @@ def init_db():
     # Đội sub-agent của director (subtasks, decision log, đồ thị bàn giao, đề xuất SKILL).
     import team
     team.migrate(conn)
+    import board
+    board.migrate(conn)
     conn.commit()
     conn.close()
 
