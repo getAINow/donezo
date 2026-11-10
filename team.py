@@ -1015,10 +1015,7 @@ def _kill(session_id):
     proc = so.ACTIVE_PROCS.get(session_id)
     if proc and proc.returncode is None:
         so.KILLED_SESSIONS.add(session_id)
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+        so._kill_tree(proc.pid)
 
 
 def cancel(st_id, by_user=False):
