@@ -468,6 +468,25 @@ if '"Scouting…" : "Scout now"' not in JS:
 check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now, ask the agent", gaps,
       "the planner cannot be switched on, scheduled or run from the dashboard")
 
+# 23c · A planner run (scout) is hidden from every team list: counting it as a sub-agent shows
+# "1 sub-agent" with nothing behind it. It gets its own "scouting" badge and a live #pl-last line.
+gaps = set()
+i = JS.find("CREW = {}")
+crew = JS[i:i + 500]
+if not re.search(r'if \(s\.team\.role === "scout"\) SCOUTING\[s\.team\.director\] = true;\s*else CREW\[', crew):
+    gaps.add("the refresh must count a running scout in SCOUTING, never in CREW")
+if not re.search(r"function scoutBadge\(s\) \{\s*return SCOUTING\[s\.id\][^\n]*\n[^\n]*>scouting</button>", JS) \
+        or "${scoutBadge(s)}" not in JS[JS.index("function agentCard("):JS.index("function quickBtns(")]:
+    gaps.add("the agent card must show a 'scouting' badge while its scout runs")
+if 'function scoutOpen(id) { bdOwner = id; switchTab("board"); }' not in JS:
+    gaps.add("the scouting badge must open the Board tab on that agent")
+plr = JS[JS.index("function plannerRender("):JS.index("async function plannerSave(")]
+if not re.search(r'running && last\) \$\("pl-last"\)\.innerHTML = `<span class="act-st blue"><span class="act-live">'
+                 r'</span>Scouting now</span>`\s*\+ ` · started \$\{esc\(plDay\(last\.created_at\)\)\} · \$\{props\} so far`', plr):
+    gaps.add("#pl-last must read 'Scouting now · started ... · N proposals so far' with the live dot while running")
+check("a running scout is not a sub-agent, and shows as 'scouting' on the card and the planner panel", gaps,
+      "the dashboard says '1 sub-agent' and shows nothing for the planner run")
+
 # Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người
 # dùng đang gõ khi thấy signal/run, và khoá tới khi bấm 🔄 — chỉ chạy khi card đang hiện trên màn hình.
 gaps = set()

@@ -1979,6 +1979,7 @@ function agentCard(s, needsYou) {
       <b title="${esc(s.name)} — double-click to rename">${esc(s.name)}</b>
       ${needsYou ? `<span class="needs-badge">needs you</span>` : ""}
       ${crewBadge(s) || (s.subtasks?.total ? `<span class="role-badge" title="Delegates work to sub-agents">director</span>` : "")}
+      ${scoutBadge(s)}
       ${meterHtml(s)}
       ${s.term_queue ? `<span class="needs-badge" title="Signals wait for the open terminal to finish its turn, then are typed in one at a time">${s.term_queue} message${s.term_queue > 1 ? "s" : ""} waiting</span>` : ""}
       <span class="spacer"></span>
@@ -4116,9 +4117,12 @@ async function refreshNow() {
     // Phiên của đội (sub-agent, verifier, reflect) không phải agent để chat: không terminal trên
     // canvas, không chip trên thanh cửa sổ, không làm đích signal — gom vào tab Team.
     const work = sessions.filter((s) => !s.team);
-    CREW = {};
+    CREW = {}; SCOUTING = {};
+    // A planner run (scout) is hidden from every team list, so it must not count as a sub-agent.
     for (const s of sessions)
-      if (s.team && s.status === "running") CREW[s.team.director] = (CREW[s.team.director] || 0) + 1;
+      if (s.team && s.status === "running")
+        if (s.team.role === "scout") SCOUTING[s.team.director] = true;
+        else CREW[s.team.director] = (CREW[s.team.director] || 0) + 1;
     const crewN = Object.values(CREW).reduce((a, b) => a + b, 0);
     $("team-live").hidden = !crewN;
     $("team-live").textContent = crewN;
@@ -4142,6 +4146,7 @@ async function refreshNow() {
 let TEAM = null;          // /api/team của workspace này (chỉ nạp khi tab Team đang mở)
 let teamView = [];        // subtask đang hiện, theo thứ tự trên màn hình
 let CREW = {};            // director id → số phiên đội đang chạy (badge trên card, số trên tab)
+let SCOUTING = {};        // director id → true while its planner run (scout) is running
 const ST_BADGE = { queued: "b-gray", running: "b-blue", verifying: "b-blue", fixing: "b-amber",
                    passed: "b-green", failed: "b-red", cancelled: "b-gray" };
 const ST_ACTIVE = ["queued", "running", "verifying", "fixing"];
@@ -4204,6 +4209,13 @@ function crewBadge(s) {
   return n ? `<button class="crew-badge" onclick="event.stopPropagation(); inspShowTeam('${esc(s.id)}')"
     title="Sub-agents this agent delegated to are working — see them in its panel">${n} sub-agent${n > 1 ? "s" : ""}</button>` : "";
 }
+
+function scoutBadge(s) {
+  return SCOUTING[s.id] ? `<button class="crew-badge" onclick="event.stopPropagation(); scoutOpen('${esc(s.id)}')"
+    title="The planner is looking for ideas for this agent. Open its board to follow the run">scouting</button>` : "";
+}
+function scoutOpen(id) { bdOwner = id; switchTab("board"); }
+window.scoutOpen = scoutOpen;
 
 // ── Đội của director, ngay trong panel của nó ──────────────────────────────
 // Người dùng không phải mở tab Team để xem sub-agent: chọn director trên canvas (hoặc bấm badge
@@ -4856,8 +4868,11 @@ function plannerRender({ settings: s, last, running, now }) {
     ? `Next run ${plDay(s.next_run_at)} (in ${days} day${days === 1 ? "" : "s"})` : "";
   $("pl-scout").disabled = running;
   $("pl-scout").textContent = running ? "Scouting…" : "Scout now";
-  $("pl-last").textContent = !last ? "No run yet."
-    : `Last run ${plDay(last.created_at)} · ${last.status} · ${last.proposals} proposal${last.proposals === 1 ? "" : "s"}`
+  const props = last ? `${last.proposals} proposal${last.proposals === 1 ? "" : "s"}` : "";
+  if (running && last) $("pl-last").innerHTML = `<span class="act-st blue"><span class="act-live"></span>Scouting now</span>`
+    + ` · started ${esc(plDay(last.created_at))} · ${props} so far`;
+  else $("pl-last").textContent = !last ? "No run yet."
+    : `Last run ${plDay(last.created_at)} · ${last.status} · ${props}`
       + (last.tokens ? ` · ${last.tokens} tokens` : "") + (last.status === "failed" && last.reason ? ` · ${last.reason}` : "");
 }
 
