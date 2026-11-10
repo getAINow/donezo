@@ -421,6 +421,27 @@ if "if (boardVisible()) boardLoad()" not in JS:
 check("the Board tab is wired: picker, four columns, add control", gaps,
       "the tab opens empty, a column is missing, or a card cannot be added")
 
+# 24 · Đề xuất của planner chờ NGƯỜI DÙNG: cột Proposed, Approve/Reject gọi /decide, link chỉ http(s)
+# (javascript: thành href là XSS), đếm trên nút tab và một mục trên Home.
+gaps = set()
+cards = JS[JS.index("function bdCard("):JS.index("function boardRender(")]
+if '["proposed", "Proposed"]' not in JS or 'k !== "proposed" || hasProposed' not in JS:
+    gaps.add("BD_COLS needs a Proposed column, shown only when the agent has proposals")
+if ('boardDecideOpen(${c.id}, true)' not in cards or 'boardDecideOpen(${c.id}, false)' not in cards
+        or 'id="bd-reason"' not in cards or "/decide`" not in JS[JS.index("function boardDecideGo("):]):
+    gaps.add("a proposed card needs Approve and Reject with a reason field that calls /api/board/<id>/decide")
+link = JS[JS.index("function bdLink("):JS.index("function bdCard(")]
+if ("/^https?:$/.test(x.protocol)" not in link or 'rel="noopener noreferrer"' not in link
+        or 'target="_blank"' not in link or "bdLink(c.url)" not in cards or "href=" in cards):
+    gaps.add("the source link must come only from bdLink: http(s) only, new tab, noopener noreferrer")
+if 'id="board-proposed" class="tab-count"' not in HTML or "bdTabCount(bd.proposed)" not in JS:
+    gaps.add("the Board tab button needs a #board-proposed count kept fresh by refresh")
+if ("Object.entries(HOME.proposed)" not in JS or "openTeam('${esc(ws)}', 'board')" not in JS
+        or 'api("/api/board/proposed")' not in JS):
+    gaps.add("Home needs one item per workspace with waiting proposals that opens its Board tab")
+check("proposals wait for the user: Proposed column, Approve/Reject, safe link, counts", gaps,
+      "a proposal cannot be decided, a javascript: url becomes a link, or nobody sees it waiting")
+
 # Luật một-người-ghi ở SERVER (_WRITERS). Khoá cũ của trình duyệt đóng WS terminal giữa lượt người
 # dùng đang gõ khi thấy signal/run, và khoá tới khi bấm 🔄 — chỉ chạy khi card đang hiện trên màn hình.
 gaps = set()
