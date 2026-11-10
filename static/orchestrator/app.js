@@ -674,15 +674,14 @@ function renderShellTabs() {
   const orphans = OPEN.filter((id) => !listed.has(id));
   nav.innerHTML = GROUPS.map((g) => {
     const all = wsOfGroup(g.id), fold = SB_FOLD.has(g.id);
-    // Thu gọn vẫn giữ dòng của workspace đang mở: pane của nó cần chỗ bấm chọn / đóng.
-    const shown = fold ? all.filter((w) => OPEN.includes(w.id)) : all;
-    const hid = all.length - shown.length;
-    return `<div class="sb-grp-row">
-       <button class="sb-fold" onclick="toggleGroupFold('${esc(g.id)}')" aria-expanded="${!fold}"
-         title="${fold ? "Show" : "Hide"} this group's workspaces">${ic("chev", "sm")}</button>
-       <button class="sb-grp" onclick="openGroup('${esc(g.id)}')" title="Show this group on Home"
-         >${esc(g.name)}${hid ? ` <span class="sb-hid">${hid}</span>` : ""}</button></div>`
-      + shown.map((w) => row(w.id, w.name || w.id)).join("");
+    // Thu gọn = ẩn HẾT (giữ lại workspace đang mở thì group một workspace trông như bấm không ăn);
+    // chấm trên tiêu đề nhắc rằng bên trong có workspace đang mở. Mở group trên Home: nút ở Home.
+    const openIn = fold && all.some((w) => OPEN.includes(w.id));
+    return `<button class="sb-grp" onclick="toggleGroupFold('${esc(g.id)}')" aria-expanded="${!fold}"
+         title="${fold ? "Show" : "Hide"} this group's workspaces">${ic("chev", "sm")}<span class="sb-grp-name"
+         >${esc(g.name)}</span>${fold && all.length ? `<span class="sb-hid">${all.length}</span>` : ""}${
+         openIn ? `<span class="dot" title="Has an open workspace"></span>` : ""}</button>`
+      + (fold ? "" : all.map((w) => row(w.id, w.name || w.id)).join(""));
   }).join("")
     + (orphans.length ? `<div class="sb-grp">Open</div>` : "")
     + orphans.map((id) => row(id, (WORKSPACES.find((w) => w.id === id) || {}).name || id)).join("");
