@@ -68,8 +68,15 @@
   <div class="release-body">
   <p>Changes since <code>v2026.11.09-1</code>.</p>
 
+  <h3>Changed</h3>
+  <ul>
+    <li>A message for an agent whose terminal is open is now typed into that terminal once its turn ends and you stop typing, instead of closing the terminal. The card shows how many messages are waiting.</li>
+    <li>Opening a terminal while a background run is going waits and opens by itself when the run ends. There is no more reload-after-an-automatic-run step.</li>
+  </ul>
+
   <h3>Fixed</h3>
   <ul>
+    <li>An agent's terminal and a background run can no longer write the same conversation at the same time. Before, this could happen when the agent's card was off screen.</li>
     <li>A background run no longer hangs when the agent leaves a dev server or other background process running. Donezo stops what is left 10 seconds after the agent's turn ends and logs what it stopped, and the run keeps the agent's real report.</li>
     <li>Cancelling a run or pressing kill also stops the processes the agent started, not only the agent.</li>
   </ul>
