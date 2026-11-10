@@ -168,8 +168,11 @@ if "function renderHome()" not in JS:
     gaps.add("renderHome() — the one renderer both Home layers go through")
 if "wsOfGroup = (gid)" not in JS:
     gaps.add("wsOfGroup() — the filter that makes a group mean anything")
-if "GROUPS.map((g) =>" not in JS or "wsOfGroup(g.id).map((w) => row(" not in JS:
+if "GROUPS.map((g) =>" not in JS or "all = wsOfGroup(g.id)" not in JS or "shown.map((w) => row(" not in JS:
     gaps.add("renderShellTabs must list workspaces UNDER their group heading, not one flat list")
+# Group thu gọn vẫn phải giữ dòng của workspace đang mở — không thì pane đó mất chỗ bấm đóng.
+if "all.filter((w) => OPEN.includes(w.id))" not in JS:
+    gaps.add("a folded sidebar group must keep its open workspaces' rows")
 if "renderWorkspaceGrid" in JS:
     gaps.add("renderWorkspaceGrid is gone — a call left behind renders the old flat list")
 for fn in ("openGroup", "homeNew", "moveWsGroup"):

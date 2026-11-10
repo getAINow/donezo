@@ -638,6 +638,15 @@ function shellSave() {
   history.replaceState(null, "", location.pathname + (parts.length ? "?" + parts.join("&") : ""));
 }
 
+// Group thu gọn trong sidebar: chỉ của trình duyệt này, không phải dữ liệu chung.
+let SB_FOLD = new Set((() => { try { return JSON.parse(localStorage.getItem("orch-sb-fold")) || []; } catch { return []; } })());
+function toggleGroupFold(id) {
+  if (!SB_FOLD.delete(id)) SB_FOLD.add(id);
+  try { localStorage.setItem("orch-sb-fold", JSON.stringify([...SB_FOLD])); } catch { /* private mode */ }
+  renderShellTabs();
+}
+window.toggleGroupFold = toggleGroupFold;
+
 // Sidebar liệt kê MỌI workspace của MỌI group, không chỉ cái đang mở: mở một workspace khác mà
 // phải quay về màn Home rồi bấm card thì mất luôn chỗ đang đứng. Dòng ≠ pane — pane vẫn tối đa
 // MAX_PANES vì mỗi pane là một iframe với terminal sống bên trong.
@@ -663,10 +672,18 @@ function renderShellTabs() {
   // của nó nằm đó mà không còn chỗ nào bấm đóng.
   const listed = new Set(GROUPS.flatMap((g) => wsOfGroup(g.id).map((w) => w.id)));
   const orphans = OPEN.filter((id) => !listed.has(id));
-  nav.innerHTML = GROUPS.map((g) =>
-    `<button class="sb-grp" onclick="openGroup('${esc(g.id)}')" title="Show this group on Home"
-       >${esc(g.name)}</button>`
-    + wsOfGroup(g.id).map((w) => row(w.id, w.name || w.id)).join("")).join("")
+  nav.innerHTML = GROUPS.map((g) => {
+    const all = wsOfGroup(g.id), fold = SB_FOLD.has(g.id);
+    // Thu gọn vẫn giữ dòng của workspace đang mở: pane của nó cần chỗ bấm chọn / đóng.
+    const shown = fold ? all.filter((w) => OPEN.includes(w.id)) : all;
+    const hid = all.length - shown.length;
+    return `<div class="sb-grp-row">
+       <button class="sb-fold" onclick="toggleGroupFold('${esc(g.id)}')" aria-expanded="${!fold}"
+         title="${fold ? "Show" : "Hide"} this group's workspaces">${ic("chev", "sm")}</button>
+       <button class="sb-grp" onclick="openGroup('${esc(g.id)}')" title="Show this group on Home"
+         >${esc(g.name)}${hid ? ` <span class="sb-hid">${hid}</span>` : ""}</button></div>`
+      + shown.map((w) => row(w.id, w.name || w.id)).join("");
+  }).join("")
     + (orphans.length ? `<div class="sb-grp">Open</div>` : "")
     + orphans.map((id) => row(id, (WORKSPACES.find((w) => w.id === id) || {}).name || id)).join("");
 
