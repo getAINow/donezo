@@ -207,6 +207,8 @@ EVENT_TRUNC = int(os.environ.get("ORCH_EVENT_TRUNC", "2000"))  # cắt payload e
 # (vd tool_result đọc file dài / output Bash đồ sộ) sẽ ném "Separator is not found,
 # and chunk exceed the limit". Nâng lên để chứa trọn dòng dài. (default 16MB)
 STREAM_LIMIT = int(os.environ.get("ORCH_STREAM_LIMIT", str(16 * 1024 * 1024)))
+# Sau event `result` đầu tiên, claude còn sống chỉ vì chờ shell nền (dev server) agent bỏ lại.
+RESULT_GRACE_S = 10
 # ── Reasoning effort: 1 THANG DÙNG CHUNG, clamp theo trần của từng engine/model ───
 # UI chỉ hiện thang này; mức nào engine không chịu nổi thì HẠ xuống trần của nó (clamp) chứ
 # không bỏ cờ âm thầm — hạ 1 nấc vẫn đúng ý "cố hết sức", còn bỏ cờ là rơi về default của CLI.
@@ -1582,6 +1584,24 @@ ACTIVE_PROCS = {}
 # Session user vừa bấm kill — process_signal thấy thì KHÔNG retry run bị giết.
 KILLED_SESSIONS = set()
 
+
+def _kill_tree(pid):
+    """Giết pid cùng mọi con cháu (con trước, cha sau); trả 'tên (pid)' của những gì đã giết.
+    proc.kill() chỉ giết claude, dev server agent mở thì sống tiếp và giữ ống stdout của run."""
+    import psutil   # noqa: PLC0415 — nạp lười như _perf_snapshot
+    try:
+        root = psutil.Process(pid)
+        procs = root.children(recursive=True) + [root]
+    except psutil.Error:
+        return []
+    killed = []
+    for p in procs:
+        with contextlib.suppress(psutil.Error):
+            name = p.name()
+            p.kill()
+            killed.append(f"{name} ({p.pid})")
+    return killed
+
 # ─── MCP servers: đăng ký server MCP cho MỌI session, ngay trên dashboard ────────
 # Thay cho việc bắt người dùng gõ `claude mcp add` trong terminal. Scope user (toàn cục), tức là
 # mọi phiên sau đó đều thấy — không thuộc workspace nào, nên nó nằm ở topbar chứ không ở canvas.
@@ -2724,7 +2744,7 @@ async def _run_claude(session, prompt, on_event=None, dry_run=False):
             except json.JSONDecodeError:
                 continue
             if isinstance(ev, dict) and ev.get("type") == "result":
-                final = ev
+                final = ev   # result ĐẦU TIÊN là báo cáo thật; cái sau là lượt task-notification
             with contextlib.suppress(Exception):   # meter hỏng không được giết run
                 meter_from_stream(session, ev)
             # Một event lỗi (parse/hiển thị) KHÔNG được giết cả run — nuốt lỗi, đi tiếp.
@@ -2737,9 +2757,27 @@ async def _run_claude(session, prompt, on_event=None, dry_run=False):
                     await on_event(kind, summary, payload)
                 except Exception:  # noqa: BLE001 — không để lỗi UI làm hỏng run
                     pass
+            if final is not None:
+                break
     finally:
-        await proc.wait()
-        await stderr_task
+        if final is None:
+            await proc.wait()
+            await stderr_task
+        else:
+            # proc.wait() chờ cả ống đóng: cháu nào còn giữ ống (dev server) là chờ mãi.
+            try:
+                await asyncio.wait_for(proc.wait(), RESULT_GRACE_S)
+            except asyncio.TimeoutError:
+                left = _kill_tree(proc.pid) if proc.returncode is None else []
+                if left:
+                    with contextlib.suppress(Exception):
+                        await on_event("system", "stopped background processes left running: "
+                                       + ", ".join(left[:5]) + (" …" if len(left) > 5 else ""),
+                                       {"processes": left})
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(proc.wait(), 2)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stderr_task, 1)
         ACTIVE_PROCS.pop(session_id, None)
 
     stderr_txt = b"".join(stderr_chunks).decode("utf-8", "replace")
@@ -5471,10 +5509,7 @@ def build_app():
         if not proc or proc.returncode is not None:
             return JSONResponse({"error": "no run is currently active on this session"}, status_code=409)
         KILLED_SESSIONS.add(sid)
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass  # vừa tự thoát xong — coi như đã kill
+        _kill_tree(proc.pid)   # vừa tự thoát xong thì trả [] — coi như đã kill
         return JSONResponse({"ok": True})
 
     def _validate_workspace(body):
