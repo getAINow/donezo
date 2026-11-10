@@ -139,6 +139,22 @@ Scrolling loads more, 10 at a time.</p>
 <p>The director's own panel on the canvas shows the same cards for its team. Its button
 <span class="ui">Whole team &amp; settings</span> leads here.</p>
 
+<h2 id="board">The Board tab</h2>
+<p>Every agent you made (not its sub-agents) has a board: the backlog of work it holds. Pick the agent at the top;
+it opens on the one with the most open cards. Cards sit in four columns: <span class="ui">To do</span>,
+<span class="ui">In progress</span>, <span class="ui">Done</span> and <span class="ui">Dropped</span> (folded until you
+click <span class="ui">Show</span>).</p>
+<ul>
+  <li><span class="ui">Add card</span> puts a title, and optional details, into To do. The agent can add cards too
+    (<code>board_add</code>), for work you asked for that it will not start now. Each card says who added it.</li>
+  <li>The list on a card moves it to another column. The pencil edits it, the bin deletes it.</li>
+  <li>When the director delegates a card, it shows the sub-agent's task id and status and moves by itself: to
+    In progress when work starts, back to To do (with a note why) when it fails, is cancelled or its work is discarded,
+    and to Done when it passes, or for code changes once the branch is merged. A card you moved to Done or Dropped
+    stays there.</li>
+</ul>
+<p>The board only holds work; sub-agents still do it. Cards stay when their agent is unregistered.</p>
+
 <h2 id="decisions">Decision log</h2>
 <p><span class="ui">Why the director chose this</span> is a list, newest first, of the decisions the director and
 sub-agents recorded: what they chose, why, and sometimes <span class="ui">Evidence</span> you can expand. Decisions about one

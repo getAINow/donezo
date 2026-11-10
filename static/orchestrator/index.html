@@ -767,6 +767,15 @@
   .crew-badge { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; flex: none;
     background: var(--blue-soft); color: var(--blue); border: none; cursor: pointer; }
 
+  /* ── Board: backlog của một agent. Cột + card mượn kiểu của bảng Team. ─── */
+  #tab-board { flex: 1; min-height: 0; overflow: auto; width: 100%; padding: 20px; }
+  #tab-board[hidden] { display: none; }
+  #bd-add textarea { min-height: 44px; }
+  .tb-dot.todo, .tb-dot.dropped { background: var(--gray); } .tb-dot.done { background: var(--green); }
+  .tb-head button { margin-left: auto; font-size: 11px; padding: 2px 8px; }
+  .bd-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+  .st-card.s-dropped { opacity: .75; }
+
   /* Khung + form dùng chung của các tab dạng trang (Team). */
   .page-form { display: grid; gap: 8px; padding: 12px 15px; }
   .page-form input, .page-form textarea, .page-form select { background: var(--bg);
@@ -1395,6 +1404,8 @@
       </div>
       <div class="tabs" role="tablist" aria-label="Workspace views">
         <button id="tab-btn-agents" class="tab active" role="tab" onclick="switchTab('agents')">Canvas</button>
+        <button id="tab-btn-board" class="tab" role="tab" onclick="switchTab('board')"
+          title="Each agent's backlog: work it holds, and where its sub-agents are with it">Board</button>
         <button id="tab-btn-team" class="tab" role="tab" onclick="switchTab('team')"
           title="Sub-agents your directors delegated to, their verification, and the team's rules">
           Team<span id="team-live" class="tab-count" hidden></span></button>
@@ -1548,6 +1559,27 @@
             </section>
           </aside>
         </div>
+      </div>
+    </div>
+
+    <!-- Board: backlog của một agent (không phải phiên đội). Chỉ GIỮ việc — sub-agent làm.
+         Cột do boardRender() dựng. -->
+    <div id="tab-board" hidden>
+      <div class="team-wrap">
+        <div class="team-head">
+          <label for="bd-agent" class="hint">Board of</label>
+          <select id="bd-agent" class="mini" onchange="boardPick(this.value)" title="Whose board to show"></select>
+        </div>
+        <form id="bd-add" class="panel page-form" onsubmit="boardAdd(event)" aria-label="Add a card">
+          <div class="two">
+            <input id="bd-title" maxlength="200" placeholder="New card for To do" aria-label="Card title" required>
+            <button class="primary" type="submit" title="Add this card to To do"><svg class="ic sm"><use href="#i-plus"/></svg> Add card</button>
+          </div>
+          <textarea id="bd-body" placeholder="Details (optional)" aria-label="Card details"></textarea>
+          <span id="bd-msg" class="hint"></span>
+        </form>
+        <div id="bd-empty" class="tb-empty" hidden></div>
+        <div id="bd-cols" class="team-board"></div>
       </div>
     </div>
 

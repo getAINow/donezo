@@ -328,7 +328,7 @@ def _caller(from_role: str, workspace_id: str = ""):
 
 @mcp.tool()
 async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: str, title: str = "",
-                         effort: str = "", workspace_id: str = ""):
+                         effort: str = "", workspace_id: str = "", card_id: int = 0):
     """Delegate one unit of work to a new sub-agent (pstack style). Returns its subtask id at once;
     the orchestrator messages you [SUB-AGENT PASSED] or [SUB-AGENT FAILED] when it is done.
     Sub-agents and verifiers always run Claude Opus 5.5.
@@ -348,12 +348,13 @@ async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: s
                investigate, high otherwise. A verifier FAIL steps it up one level automatically,
                so start as low as the task honestly allows.
         workspace_id: your workspace, if your name exists in several.
+        card_id: the board card this works on (board_list); it follows the sub-agent's status.
     """
     orch, me, err = _caller(from_role, workspace_id)
     if err:
         return err
     import team
-    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, effort)
+    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, effort, card_id)
     if res.get("error"):
         return f"⛔ {res['error']}"
     return (f"Sub-agent {res['id']} queued ({playbook}). End your turn when you have delegated "
@@ -385,6 +386,58 @@ async def cancel_subagent(from_role: str, subtask_id: str, workspace_id: str = "
         return "⛔ not one of your subtasks"
     res = team.cancel(subtask_id)
     return f"⛔ {res['error']}" if res.get("error") else f"Cancelled {subtask_id}."
+
+
+def _board_owner(from_role: str, workspace_id: str = ""):
+    """(board module, workspace, your session, error). Team sessions have no board."""
+    orch, me, err = _caller(from_role, workspace_id)
+    if err:
+        return None, "", None, err
+    import board
+    import team
+    if team.is_team_session(me):
+        return None, "", None, "⛔ sub-agents and verifiers have no board — report back to your director."
+    return board, me.get("workspace_id") or orch.DEFAULT_WORKSPACE, me, ""
+
+
+@mcp.tool()
+async def board_list(from_role: str, status: str = "", workspace_id: str = ""):
+    """Your board: the backlog of work you hold (todo, in_progress, done, dropped), newest first.
+    Read it when asked what is next."""
+    board, ws, me, err = _board_owner(from_role, workspace_id)
+    if err:
+        return err
+    if status and status not in board.STATUSES:
+        return f"⛔ status must be one of: {', '.join(board.STATUSES)}"
+    rows = [{k: c[k] for k in ("id", "title", "body", "status", "source", "subtask_id", "task_status",
+                               "note")} for c in board.list_cards(ws, me["id"], status)]
+    return json.dumps(rows, ensure_ascii=False) if rows else "Your board is empty."
+
+
+@mcp.tool()
+async def board_add(from_role: str, title: str, body: str = "", workspace_id: str = ""):
+    """Put work the user asked for that you will not start now on your board (status todo).
+    Returns the card id; pass it as spawn_subagent(card_id=…) when you delegate it."""
+    board, ws, me, err = _board_owner(from_role, workspace_id)
+    if err:
+        return err
+    res = board.add(ws, me["id"], title, body, source="agent")
+    return f"⛔ {res['error']}" if res.get("error") else f"Card {res['id']} added to your board (todo)."
+
+
+@mcp.tool()
+async def board_update(from_role: str, card_id: int, status: str = "", title: str = "", body: str = "",
+                       workspace_id: str = ""):
+    """Change one of your cards. Empty arguments stay as they are. status: todo | in_progress |
+    done | dropped (done and dropped are not undone by the linked sub-agent's progress)."""
+    board, ws, me, err = _board_owner(from_role, workspace_id)
+    if err:
+        return err
+    res = board.update(ws, card_id, owner_id=me["id"], status=status, title=title,
+                       body=body or None)
+    if res.get("error"):
+        return "⛔ not one of your cards" if res["error"] == "not found" else f"⛔ {res['error']}"
+    return f"Card {res['id']}: {res['status']} · {res['title']}"
 
 
 @mcp.tool()
