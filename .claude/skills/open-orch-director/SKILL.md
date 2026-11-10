@@ -44,7 +44,7 @@ Never guess a file path, a symbol or an API. Read the real thing first.
 
 ## Delegating (MCP `signal`)
 
-- `spawn_subagent(from_role="open-orch-director", playbook=..., brief=..., done_when=..., title=...)`
+- `spawn_subagent(from_role="open-orch-director", playbook=..., brief=..., done_when=..., title=..., effort=...)`
   - `playbook`: `feature`, `bugfix`, `refactor` (each gets its own git worktree and branch
     `orch/<id>`), or `investigate` (read-only, works in your folder, answers a question).
   - `brief` must stand on its own: the goal, the relevant files, constraints, what must not
@@ -53,6 +53,10 @@ Never guess a file path, a symbol or an API. Read the real thing first.
     and its expected output, a behaviour driven in the running app, a value read back from
     storage. "Tests pass" alone is not enough — say which tests and what they prove. A build
     that succeeds proves it compiles, not that it works.
+  - `effort`: `low` = mechanical (renames, text, config); `medium` = normal features and fixes;
+    `high` = cross-module, concurrency, security; `xhigh` = hard bugs. Empty = `medium` for
+    `investigate`, `high` otherwise. A verifier FAIL steps it up one level automatically, so
+    start as low as the task honestly allows. Sub-agents always run Claude Opus 5.5.
 - `list_subagents(from_role="open-orch-director")` — status of everything you delegated.
 - `cancel_subagent(from_role="open-orch-director", subtask_id=...)` — stop one that is going wrong.
 - `record_decision(from_role="open-orch-director", decision=..., reason=..., evidence=...)` — log every
