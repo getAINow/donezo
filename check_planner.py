@@ -88,7 +88,7 @@ PROJ = TMP / "proj-lead"
 PROJ.mkdir()
 (PROJ / "secret.txt").write_text("the director's files\n", encoding="utf-8")
 for sid, name in (("dir-1", "lead"), ("dir-2", "peer"), ("dir-3", "third"), ("dir-4", "gone"),
-                  ("dir-5", "maker"), ("dir-6", "maker2")):
+                  ("dir-5", "maker"), ("dir-6", "maker2"), ("dir-7", "asker")):
     so.register_session(sid, name, cwd=str(PROJ), model="", permission_mode="bypassPermissions",
                         workspace_id=WS)
 so.register_session("sub-x", "sub-x-feature", cwd=str(PROJ), model="", workspace_id=WS)
@@ -535,6 +535,41 @@ async def case_j():
               and not asks("sub-x") and not asks(scout_sid), f"{errs} {on}")
 
 
+async def case_j7():
+    """The button: one ask at a time. It ends when the agent's turn for it is over or a brief is saved."""
+    def asking():
+        return planner.view(WS, "dir-7").get("asking")
+    async with client() as c:
+        async def press():
+            return await c.post("/api/planner/ask", json={"workspace_id": WS, "owner_id": "dir-7"})
+        r1, r2 = await press(), await press()
+        check("j7) two presses while the first ask is unanswered: one message, the second is refused",
+              r1.status_code == 200 and r2.status_code == 400 and "already asked" in r2.text
+              and len(asks("dir-7")) == 1, f"{r1.text} {r2.text} {len(asks('dir-7'))}")
+        check("j7) the panel says an ask is in progress", asking() is True)
+        planner.save(WS, "dir-7", enabled=True)
+        team._exec("UPDATE planners SET next_run_at = ? WHERE owner_id = 'dir-7'",
+                   ((datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds"),))
+        planner.run_due()
+        check("j8) switching on with no brief and a due tick send nothing more while it is in progress",
+              len(asks("dir-7")) == 1 and asking() is True and not scouts("dir-7"), str(len(asks("dir-7"))))
+        planner.save(WS, "dir-7", enabled=False)
+        sig = team._row("SELECT * FROM signals WHERE to_session = 'dir-7' AND message LIKE '[PLANNER BRIEF]%'")
+        await so.process_signal(sig)     # the fake agent's turn ends and it saves no brief
+        st = team._row("SELECT status FROM signals WHERE id = ?", (sig["id"],))["status"]
+        a = asking()
+        r3 = await press()
+        check("j9) after the agent's turn ends without a brief the ask is over and a new one is sent",
+              st == "done" and a is False and r3.status_code == 200 and len(asks("dir-7")) == 2,
+              f"{st} {a} {r3.text} {len(asks('dir-7'))}")
+        res = await signal_mcp.planner_brief(from_role="asker", text="Brief seven: a tide clock")
+        a = asking()
+        r4 = await press()
+        check("j10) after the agent saves a brief the ask is over and a new one is sent",
+              res == "Brief saved." and a is False and r4.status_code == 200 and len(asks("dir-7")) == 3,
+              f"{res} {a} {r4.text} {len(asks('dir-7'))}")
+
+
 async def case_k():
     root = so.DB_DIR / "scout"
     assert TMP.resolve() in root.resolve().parents, root      # nothing below is deleted outside TMP
@@ -592,7 +627,7 @@ async def case_k():
 
 
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_k):
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_j7, case_k):
         await case()
 
 
