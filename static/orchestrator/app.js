@@ -4695,7 +4695,7 @@ window.teamRender = teamRender;
 const BD_COLS = [["proposed", "Proposed"], ["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"],
   ["dropped", "Dropped"]];
 let BOARD = { agents: [], cards: [], open: {}, proposed: {} }, bdOwner = "", bdShowDropped = false, bdEdit = 0,
-  bdSeq = 0, bdDecide = null, bdOpen = 0;   // bdDecide: {id, approve} của card đang mở ô lý do; bdOpen: card trong hộp thoại
+  bdSeq = 0, bdDecide = null, bdOpen = 0, bdColsHtml = "", bdMHtml = "";   // bdDecide: {id, approve} của card đang mở ô lý do; bdOpen: card trong hộp thoại
 const boardVisible = () => !$("tab-board").hidden;
 const bdQ = (o) => "?" + new URLSearchParams({ ...(currentWS ? { workspace_id: currentWS } : {}), ...o });
 
@@ -4787,7 +4787,7 @@ function boardRender() {
   $("bd-cols").hidden = !cards.length;
   const hasProposed = cards.some((c) => c.status === "proposed");
   $("bd-cols").classList.toggle("bd-five", hasProposed);
-  $("bd-cols").innerHTML = BD_COLS.filter(([k]) => k !== "proposed" || hasProposed).map(([k, label]) => {
+  const cols = BD_COLS.filter(([k]) => k !== "proposed" || hasProposed).map(([k, label]) => {
     const list = cards.filter((c) => c.status === k);
     const fold = k === "dropped" && !bdShowDropped && list.length;
     const toggle = k === "dropped" && list.length ? `<button class="secondary" onclick="boardFold()" aria-expanded="${!fold}"
@@ -4796,6 +4796,8 @@ function boardRender() {
       <span class="n">${list.length}</span>${toggle}</div>${
       fold ? "" : list.map(bdCard).join("") || `<div class="tb-empty">Nothing here</div>`}</div>`;
   }).join("");
+  // refresh chạy vài giây một lần: chỉ ghi DOM khi khác, nếu không mất focus, chọn chữ, cuộn
+  if (cols !== bdColsHtml) $("bd-cols").innerHTML = bdColsHtml = cols;
   bdDraw(false);
 }
 // force: vẽ lại cả khi đang gõ (chính người dùng vừa mở/đóng ô sửa hay ô lý do).
@@ -4805,8 +4807,13 @@ function bdDraw(force) {
   if (!c) return boardClose();   // xoá ở nơi khác
   if (!force && (bdEdit || bdDecide)) return;   // đang gõ trong hộp thoại: refresh không được xoá chữ
   const who = BOARD.agents.find((s) => s.id === bdOwner);
+  const html = bdDialog(c, who ? who.name : "agent");
+  if (!force && html === bdMHtml) return;   // không đổi gì: giữ nguyên DOM (cuộn, danh sách Move to, chữ đang chọn)
   const a = document.activeElement, f = a && $("bd-m").contains(a) ? a.id : "";
-  $("bd-m").innerHTML = bdDialog(c, who ? who.name : "agent");
+  const b = $("bd-m").querySelector(".bd-body"), top = force ? 0 : b ? b.scrollTop : 0;
+  $("bd-m").innerHTML = bdMHtml = html;
+  const nb = $("bd-m").querySelector(".bd-body");
+  if (nb) nb.scrollTop = top;
   ((f && $(f)) || $("bd-m-close")).focus();
 }
 function boardOpen(id) {

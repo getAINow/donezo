@@ -457,8 +457,11 @@ for need in ("#${c.id}", "esc(c.body)", "bdLink(c.url)", "esc(c.note)", "boardDe
         gaps.add(f"the card dialog must hold {need}")
 m = HTML[HTML.index('<div id="bd-modal"'):HTML.index("</div>", HTML.index('id="bd-m-msg"'))]
 if ('class="modal-overlay" hidden' not in m or 'role="dialog" aria-modal="true" aria-labelledby="bd-m-title"' not in m
-        or "event.target === this) boardClose()" not in m):
-    gaps.add("#bd-modal must use the modal-overlay dialog pattern and close on an overlay click")
+        or "event.target === this && !bdEdit && !bdDecide) boardClose()" not in m):
+    gaps.add("#bd-modal must use the modal-overlay dialog pattern; an overlay click closes it only when no form is open")
+if ("if (cols !== bdColsHtml)" not in JS or "if (!force && html === bdMHtml) return;" not in JS
+        or "nb.scrollTop = top" not in JS):
+    gaps.add("a refresh that changes no card must not rewrite #bd-cols or #bd-m, and a redraw keeps the body scroll")
 if '!$("bd-modal").hidden) boardClose()' not in JS:
     gaps.add("Escape must close the card dialog")
 if "if (!force && (bdEdit || bdDecide)) return;" not in JS:

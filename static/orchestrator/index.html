@@ -1807,7 +1807,7 @@
 </div>
 
 <!-- Card của Board: cột chỉ có số + tiêu đề, mọi thứ còn lại ở đây. Bấm nền đóng: chữ đang gõ là của chính card. -->
-<div id="bd-modal" class="modal-overlay" hidden onclick="if (event.target === this) boardClose()">
+<div id="bd-modal" class="modal-overlay" hidden onclick="if (event.target === this && !bdEdit && !bdDecide) boardClose()">
   <div class="modal form-card na bd-m" role="dialog" aria-modal="true" aria-labelledby="bd-m-title">
     <div id="bd-m"></div>
     <div id="bd-m-msg" class="form-msg"></div>
