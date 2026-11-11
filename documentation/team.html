@@ -163,7 +163,7 @@ it follows changes an agent makes to the card.</p>
 <h3 id="proposals">Proposals</h3>
 <p>A proposal is an idea the planner found while researching, with a link to where it found it. It waits in a
 <span class="ui">Proposed</span> column, first on the board, until you decide. Only you decide: no agent can approve or
-start a proposal, not even the agent whose board it is on. An agent cannot reword a waiting proposal or bring
+start a proposal on its own, not even the agent whose board it is on. An agent cannot reword a waiting proposal or bring
 back one you rejected; you still can.</p>
 <ul>
   <li><span class="ui">Approve</span> moves the card to To do, where it is ordinary work again.
@@ -171,6 +171,9 @@ back one you rejected; you still can.</p>
     optional reason.</li>
   <li>The reason is kept on the card and shown in its note, for example <em>approved: users keep asking</em>. The agent
     reads it with <code>board_list</code>.</li>
+  <li>You can also tell your agent in chat, for example <em>approve card 7, users keep asking</em> or <em>reject card 8,
+    out of scope</em>. It decides with <code>board_decide</code>, and the note then says so, for example
+    <em>approved via agent: users keep asking</em>. The agent never decides by itself, only when you ask.</li>
   <li>The link shows the site's name and opens in a new tab.</li>
   <li>The number on the <span class="ui">Board</span> tab counts the proposals waiting in that workspace. Home lists each
     workspace that has some under <span class="ui">Needs you</span>; <span class="ui">Open Board</span> takes you there.</li>

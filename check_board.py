@@ -437,8 +437,57 @@ async def case_k():
           not m.startswith("⛔") and card(d)["status"] == "todo", m)
 
 
+async def case_l():
+    import httpx
+    async def missing(**_):
+        return "⛔ signal_mcp has no board_decide tool"
+    decide = getattr(signal_mcp, "board_decide", missing)
+    a = board.propose(WS, "dir-1", "Agent approves")
+    m = await decide(from_role="lead", card_id=a["id"], approve=True, reason="user said  go")
+    c = card(a["id"])
+    check("l) board_decide approves the caller's own proposal, note says via agent",
+          not m.startswith("⛔") and (c["status"], c["decision"], c["decision_reason"]) == ("todo", "approved", "user said go")
+          and "via agent" in c["note"] and "user said go" in c["note"], f"{m} {dict(c)}")
+    r = board.propose(WS, "dir-1", "Agent rejects")
+    m = await decide(from_role="lead", card_id=r["id"], approve=False, reason="out of scope")
+    c = card(r["id"])
+    check("l) board_decide rejects: dropped, rejected, note says via agent",
+          not m.startswith("⛔") and (c["status"], c["decision"]) == ("dropped", "rejected")
+          and c["note"] == "rejected via agent: out of scope", f"{m} {dict(c)}")
+    h = board.propose(WS, "dir-1", "Dashboard decides")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()),
+                                 base_url="http://test") as cl:
+        resp = await cl.post(f"/api/board/{h['id']}/decide", json={"workspace_id": WS, "approve": True,
+                                                                  "reason": "users ask"})
+    check("l) the dashboard route keeps today's note wording",
+          resp.status_code == 200 and card(h["id"])["note"] == "approved: users ask", resp.text)
+    t = await add("lead", "Plain todo")
+    d = await add("lead", "Plain done")
+    await signal_mcp.board_update(from_role="lead", card_id=d, status="done")
+    for cid in (t, d, r["id"]):
+        before = dict(card(cid))
+        m = await decide(from_role="lead", card_id=cid, approve=True, reason="x")
+        check(f"l) board_decide refuses a {before['status']} card and leaves it unchanged",
+              m.startswith("⛔") and dict(card(cid)) == before, m)
+    so.register_session("dir-3", "peer-3", cwd=str(REPO), model="", workspace_id=WS)
+    o = board.propose(WS, "dir-3", "Peer's idea")
+    before = dict(card(o["id"]))
+    m = await decide(from_role="lead", card_id=o["id"], approve=True)
+    check("l) board_decide refuses another agent's proposal", m.startswith("⛔") and dict(card(o["id"])) == before, m)
+    so.register_session("ver-x", "ver-x-verify", cwd=str(REPO), model="", workspace_id=WS)
+    team._set_team("ver-x", "dir-1", "verifier")
+    s = board.propose(WS, "dir-1", "Team must not decide")
+    m1 = await decide(from_role="sub-x-feature", card_id=s["id"], approve=True)
+    m2 = await decide(from_role="ver-x-verify", card_id=s["id"], approve=False)
+    check("l) sub-agent and verifier sessions are refused",
+          all("have no board" in x for x in (m1, m2)) and card(s["id"])["status"] == "proposed", f"{m1} / {m2}")
+    m = await signal_mcp.board_update(from_role="lead", card_id=r["id"], status="todo")
+    check("l) after a rejection via the agent, board_update still cannot revive it",
+          m.startswith("⛔") and card(r["id"])["status"] == "dropped", m)
+
+
 async def main():
-    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_k):
+    for case in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i, case_j, case_k, case_l):
         try:
             res = case()
             if asyncio.iscoroutine(res):

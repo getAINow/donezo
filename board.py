@@ -107,9 +107,9 @@ def propose(ws, owner_id, title, body="", url=""):
     return card
 
 
-def decide(ws, card_id, approve, reason=""):
-    """The user's answer to a proposal: approved → todo, rejected → dropped. Only the HTTP route
-    calls this; no MCP tool does, so no agent can approve its own idea."""
+def decide(ws, card_id, approve, reason="", via_agent=False):
+    """The user's answer to a proposal: approved → todo, rejected → dropped. The HTTP route and
+    board_decide (the user told their agent in chat; via_agent marks the note) call this."""
     card = get(ws, card_id)
     if not card:
         return {"error": "not found"}
@@ -117,9 +117,10 @@ def decide(ws, card_id, approve, reason=""):
         return {"error": f"card {card['id']} is {card['status']}, not a proposal"}
     reason = " ".join(str(reason or "").split())[:1000]
     verdict = "approved" if approve else "rejected"
+    label = f"{verdict} via agent" if via_agent else verdict
     team._exec("UPDATE board_cards SET status = ?, decision = ?, decision_reason = ?, note = ?, updated_at = ? "
                "WHERE id = ?", ("todo" if approve else "dropped", verdict, reason,
-                                (f"{verdict}: {reason}" if reason else verdict)[:NOTE_MAX], team._so()._now(),
+                                (f"{label}: {reason}" if reason else label)[:NOTE_MAX], team._so()._now(),
                                 card["id"]))
     card = get(ws, card["id"])
     _publish(card)
