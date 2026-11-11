@@ -144,10 +144,16 @@ Scrolling loads more, 10 at a time.</p>
 it opens on the one with the most proposals waiting, otherwise the most open cards. Cards sit in four columns: <span class="ui">To do</span>,
 <span class="ui">In progress</span>, <span class="ui">Done</span> and <span class="ui">Dropped</span> (folded until you
 click <span class="ui">Show</span>).</p>
+<p>A card in a column shows only its number and title, so the columns stay easy to scan. The number, such as
+<code>#12</code>, is the one you and the agents use to name a card (<code>card_id</code> in the board tools).
+Click a card, or focus it and press Enter, to open it: the window shows who added it, the full details, the source
+link, the note and every action. <span class="ui">Close</span>, Escape or a click outside closes it. While it is open
+it follows changes an agent makes to the card.</p>
 <ul>
   <li><span class="ui">Add card</span> puts a title, and optional details, into To do. The agent can add cards too
-    (<code>board_add</code>), for work you asked for that it will not start now. Each card says who added it.</li>
-  <li>The list on a card moves it to another column. The pencil edits it, the bin deletes it.</li>
+    (<code>board_add</code>), for work you asked for that it will not start now. The open card says who added it.</li>
+  <li>In the open card, the list moves it to another column. The pencil edits the title and details, the bin
+    deletes the card.</li>
   <li>When the director delegates a card, it shows the sub-agent's task id and status and moves by itself: to
     In progress when work starts, back to To do (with a note why) when it fails, is cancelled or its work is discarded,
     and to Done when it passes, or for code changes once the branch is merged. A card you moved to Done or Dropped
@@ -161,7 +167,8 @@ start a proposal, not even the agent whose board it is on. An agent cannot rewor
 back one you rejected; you still can.</p>
 <ul>
   <li><span class="ui">Approve</span> moves the card to To do, where it is ordinary work again.
-    <span class="ui">Reject</span> moves it to Dropped. Either one first asks for an optional reason.</li>
+    <span class="ui">Reject</span> moves it to Dropped. Open the card to find both; either one first asks for an
+    optional reason.</li>
   <li>The reason is kept on the card and shown in its note, for example <em>approved: users keep asking</em>. The agent
     reads it with <code>board_list</code>.</li>
   <li>The link shows the site's name and opens in a new tab.</li>

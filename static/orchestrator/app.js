@@ -3334,6 +3334,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("na-modal").hidden) newAgentClose();
   if (e.key === "Escape" && !$("td-modal").hidden) teamDelegateClose();
   if (e.key === "Escape" && !$("sg-modal").hidden) sigClose();
+  if (e.key === "Escape" && !$("bd-modal").hidden) boardClose();
 });
 
 // Nút trong danh sách: tên đi qua data-attribute, không qua inline onclick.
@@ -4694,7 +4695,7 @@ window.teamRender = teamRender;
 const BD_COLS = [["proposed", "Proposed"], ["todo", "To do"], ["in_progress", "In progress"], ["done", "Done"],
   ["dropped", "Dropped"]];
 let BOARD = { agents: [], cards: [], open: {}, proposed: {} }, bdOwner = "", bdShowDropped = false, bdEdit = 0,
-  bdSeq = 0, bdDecide = null;   // bdDecide: {id, approve} của card đang mở ô lý do
+  bdSeq = 0, bdDecide = null, bdOpen = 0;   // bdDecide: {id, approve} của card đang mở ô lý do; bdOpen: card trong hộp thoại
 const boardVisible = () => !$("tab-board").hidden;
 const bdQ = (o) => "?" + new URLSearchParams({ ...(currentWS ? { workspace_id: currentWS } : {}), ...o });
 
@@ -4712,7 +4713,7 @@ async function boardLoad() {
   BOARD = { agents, cards: r.cards, open: r.open, proposed: r.proposed };
   bdTabCount(r.proposed);
   plannerLoad().catch((e) => console.error(e));
-  if (!bdEdit && !bdDecide) boardRender();   // đang gõ trong card: refresh không được xoá chữ
+  boardRender();
 }
 
 function bdTabCount(proposed) {
@@ -4729,39 +4730,49 @@ function bdLink(u) {
     title="${esc(u)}">${esc(x.hostname)}</a>` : "";
 }
 
-function bdCard(c, who) {
-  if (bdEdit === c.id) return `<div class="st-card"><div class="page-form" style="padding:0">
-      <input id="bd-e-title" maxlength="200" value="${esc(c.title)}" aria-label="Card title">
-      <textarea id="bd-e-body" aria-label="Card details" placeholder="Details (optional)">${esc(c.body)}</textarea>
-      <div class="st-acts"><button class="primary" onclick="boardSave(${c.id})" title="Save the title and details">Save</button>
-        <button class="st-sec" onclick="boardEditOpen(0)" title="Keep the card as it was">Cancel</button></div></div></div>`;
+// Cột chỉ hiện số + tiêu đề; bấm card mở hộp thoại #bd-modal chứa toàn bộ card và mọi nút.
+function bdCard(c) {
+  return `<button type="button" class="st-card bd-card s-${c.status}" data-card="${c.id}" onclick="boardOpen(${c.id})"
+    aria-label="Card #${c.id}: ${esc(c.title)}"><span class="st-title"><span class="bd-num">#${c.id}</span> ${esc(c.title)}</span></button>`;
+}
+
+function bdDialog(c, who) {
   const task = c.subtask_id ? `<span class="st-chip mono" title="Linked sub-agent task">${esc(c.subtask_id)}</span>`
     + badge(esc(c.task_status || "removed"), ST_BADGE[c.task_status]) : "";
-  const d = bdDecide && bdDecide.id === c.id ? bdDecide : null;
-  if (d) return `<div class="st-card s-${c.status}" data-card="${c.id}">
-    <div class="st-title">${esc(c.title)}</div>
-    <div class="page-form" style="padding:0">
-      <input id="bd-reason" maxlength="1000" placeholder="Reason (optional)" aria-label="Reason to ${d.approve ? "approve" : "reject"}"
-        onkeydown="if (event.key === 'Enter') boardDecideGo(); if (event.key === 'Escape') boardDecideOpen(0)">
-      <div class="st-acts"><button class="${d.approve ? "attn-ok" : "danger"}" onclick="boardDecideGo()"
-          title="${d.approve ? "Approve: the card moves to To do" : "Reject: the card moves to Dropped"}">${d.approve ? "Approve" : "Reject"}</button>
-        <button class="st-sec" onclick="boardDecideOpen(0)" title="Leave the proposal waiting">Cancel</button></div></div></div>`;
   const by = c.source === "planner" ? "Proposed by planner" : `Added by ${c.source === "agent" ? esc(who) : "You"}`;
+  const head = `<h3 id="bd-m-title"><span class="bd-num">#${c.id}</span><span class="bd-m-t">${esc(c.title)}</span>
+      <span class="spacer"></span>
+      <button type="button" id="bd-m-close" class="icon-btn" onclick="boardClose()" title="Close" aria-label="Close">${ic("x")}</button></h3>
+    <div class="st-top"><span class="st-who">${by}</span>${task}</div>`;
+  if (bdEdit === c.id) return `${head}<div class="page-form" style="padding:0">
+      <input id="bd-e-title" maxlength="200" value="${esc(c.title)}" aria-label="Card title">
+      <textarea id="bd-e-body" rows="8" aria-label="Card details" placeholder="Details (optional)">${esc(c.body)}</textarea>
+      <div class="st-acts"><button type="button" class="primary" onclick="boardSave(${c.id})" title="Save the title and details">Save</button>
+        <button type="button" class="st-sec" onclick="boardEditOpen(0)" title="Keep the card as it was">Cancel</button></div></div>`;
   const link = c.url ? bdLink(c.url) : "";
-  return `<div class="st-card s-${c.status}" data-card="${c.id}">
-    <div class="st-top"><span class="st-who">${by}</span>${task}</div>
-    <div class="st-title">${esc(c.title)}</div>
+  const reason = c.decision && !c.note.includes(c.decision_reason || c.decision)
+    ? `${c.decision}${c.decision_reason ? `: ${c.decision_reason}` : ""}` : "";
+  const d = bdDecide && bdDecide.id === c.id ? bdDecide : null;
+  const acts = d ? `<div class="page-form" style="padding:0">
+      <input id="bd-reason" maxlength="1000" placeholder="Reason (optional)" aria-label="Reason to ${d.approve ? "approve" : "reject"}"
+        onkeydown="if (event.key === 'Enter') { event.preventDefault(); boardDecideGo(); }">
+      <div class="st-acts"><button type="button" class="${d.approve ? "attn-ok" : "danger"}" onclick="boardDecideGo()"
+          title="${d.approve ? "Approve: the card moves to To do" : "Reject: the card moves to Dropped"}">${d.approve ? "Approve" : "Reject"}</button>
+        <button type="button" class="st-sec" onclick="boardDecideOpen(0)" title="Leave the proposal waiting">Cancel</button></div></div>`
+    : `<div class="st-acts">${c.status === "proposed" ? `
+      <button type="button" id="bd-m-ok" class="attn-ok" onclick="boardDecideOpen(${c.id}, true)" title="Approve: the card moves to To do">Approve</button>
+      <button type="button" id="bd-m-no" class="secondary" onclick="boardDecideOpen(${c.id}, false)" title="Reject: the card moves to Dropped">Reject</button>` : `
+      <select id="bd-m-move" class="mini" aria-label="Move to" title="Move to another column" onchange="boardMove(${c.id}, this.value)">${
+        BD_COLS.slice(1).map(([k, l]) => `<option value="${k}"${k === c.status ? " selected" : ""}>${l}</option>`).join("")}</select>`}
+      <button type="button" id="bd-m-edit" class="st-sec" onclick="boardEditOpen(${c.id})" title="Edit the title and details" aria-label="Edit">${ic("edit", "sm")}</button>
+      <button type="button" id="bd-m-del" class="st-sec" onclick="boardDelete(${c.id})" title="Delete this card" aria-label="Delete">${ic("trash", "sm")}</button>
+    </div>`;
+  return `${head}
     ${c.body ? `<div class="bd-body">${esc(c.body)}</div>` : ""}
     ${link ? `<div class="st-note">Source: ${link}</div>` : ""}
     ${c.note ? `<div class="st-note" title="${c.decision ? "Your decision" : "Last automatic change"}">${esc(c.note)}</div>` : ""}
-    <div class="st-acts">${c.status === "proposed" ? `
-      <button class="attn-ok" onclick="boardDecideOpen(${c.id}, true)" title="Approve: the card moves to To do">Approve</button>
-      <button class="secondary" onclick="boardDecideOpen(${c.id}, false)" title="Reject: the card moves to Dropped">Reject</button>` : `
-      <select class="mini" aria-label="Move to" title="Move to another column" onchange="boardMove(${c.id}, this.value)">${
-        BD_COLS.slice(1).map(([k, l]) => `<option value="${k}"${k === c.status ? " selected" : ""}>${l}</option>`).join("")}</select>`}
-      <button class="st-sec" onclick="boardEditOpen(${c.id})" title="Edit the title and details" aria-label="Edit">${ic("edit", "sm")}</button>
-      <button class="st-sec" onclick="boardDelete(${c.id})" title="Delete this card" aria-label="Delete">${ic("trash", "sm")}</button>
-    </div></div>`;
+    ${reason ? `<div class="st-note" title="Your decision">${esc(reason)}</div>` : ""}
+    ${acts}`;
 }
 
 function boardRender() {
@@ -4783,8 +4794,33 @@ function boardRender() {
       title="${fold ? "Show" : "Hide"} dropped cards">${fold ? "Show" : "Hide"}</button>` : "";
     return `<div class="tb-col" data-col="${k}"><div class="tb-head"><span class="tb-dot ${k}"></span>${label}
       <span class="n">${list.length}</span>${toggle}</div>${
-      fold ? "" : list.map((c) => bdCard(c, who ? who.name : "agent")).join("") || `<div class="tb-empty">Nothing here</div>`}</div>`;
+      fold ? "" : list.map(bdCard).join("") || `<div class="tb-empty">Nothing here</div>`}</div>`;
   }).join("");
+  bdDraw(false);
+}
+// force: vẽ lại cả khi đang gõ (chính người dùng vừa mở/đóng ô sửa hay ô lý do).
+function bdDraw(force) {
+  if (!bdOpen) return;
+  const c = BOARD.cards.find((x) => x.id === bdOpen);
+  if (!c) return boardClose();   // xoá ở nơi khác
+  if (!force && (bdEdit || bdDecide)) return;   // đang gõ trong hộp thoại: refresh không được xoá chữ
+  const who = BOARD.agents.find((s) => s.id === bdOwner);
+  const a = document.activeElement, f = a && $("bd-m").contains(a) ? a.id : "";
+  $("bd-m").innerHTML = bdDialog(c, who ? who.name : "agent");
+  ((f && $(f)) || $("bd-m-close")).focus();
+}
+function boardOpen(id) {
+  bdOpen = id; bdEdit = 0; bdDecide = null;
+  $("bd-m-msg").textContent = "";
+  $("bd-modal").hidden = false;
+  bdDraw(true);
+}
+function boardClose() {
+  const id = bdOpen;
+  bdOpen = bdEdit = 0; bdDecide = null;
+  $("bd-modal").hidden = true;
+  const el = document.querySelector(`#bd-cols [data-card="${id}"]`);
+  if (el) el.focus();
 }
 
 async function boardDo(path, method, body) {
@@ -4792,7 +4828,7 @@ async function boardDo(path, method, body) {
   catch (e) {
     let m = String(e);
     try { m = JSON.parse(m).error || m; } catch { /* text */ }
-    showMsg("bd-msg", m, false);
+    showMsg(bdOpen ? "bd-m-msg" : "bd-msg", m, false);
     return false;
   } finally { await boardLoad().catch(() => {}); }
 }
@@ -4806,38 +4842,39 @@ async function boardAdd(e) {
     $("bd-msg").textContent = "";
   }
 }
-function boardPick(id) { bdOwner = id; bdEdit = 0; bdDecide = null; boardLoad().catch((e) => console.error(e)); }
+function boardPick(id) { if (bdOpen) boardClose(); bdOwner = id; boardLoad().catch((e) => console.error(e)); }
 function boardDecideOpen(id, approve) {
   bdDecide = id ? { id, approve } : null;
-  boardRender();
+  bdDraw(true);
   if (id) $("bd-reason").focus();
 }
 function boardDecideGo() {
   const { id, approve } = bdDecide;
   const reason = $("bd-reason").value.trim();
-  bdDecide = null;
+  boardClose();
   boardDo(`/api/board/${id}/decide` + bdQ({}), "POST", { approve, reason });
 }
 function boardFold() { bdShowDropped = !bdShowDropped; boardRender(); }
 function boardMove(id, status) { boardDo(`/api/board/${id}` + bdQ({}), "POST", { status }); }
 function boardEditOpen(id) {
   bdEdit = id;
-  boardRender();
+  bdDraw(true);
   if (id) $("bd-e-title").focus();
 }
 async function boardSave(id) {
   const title = $("bd-e-title").value.trim();
-  if (!title) return showMsg("bd-msg", "A card needs a title.", false);
+  if (!title) return showMsg("bd-m-msg", "A card needs a title.", false);
   bdEdit = 0;
   await boardDo(`/api/board/${id}` + bdQ({}), "POST", { title, body: $("bd-e-body").value.trim() });
 }
 function boardDelete(id) {
   const c = BOARD.cards.find((x) => x.id === id);
-  if (c && confirm(`Delete the card "${c.title}"?`)) boardDo(`/api/board/${id}` + bdQ({}), "DELETE");
+  if (c && confirm(`Delete the card "${c.title}"?`)) { boardClose(); boardDo(`/api/board/${id}` + bdQ({}), "DELETE"); }
 }
 window.boardAdd = boardAdd; window.boardPick = boardPick; window.boardFold = boardFold;
 window.boardMove = boardMove; window.boardEditOpen = boardEditOpen; window.boardSave = boardSave;
 window.boardDelete = boardDelete; window.boardDecideOpen = boardDecideOpen; window.boardDecideGo = boardDecideGo;
+window.boardOpen = boardOpen; window.boardClose = boardClose;
 
 // ── Planner of the picked agent (planner.py): a scout that files proposals on this board ──────
 // Fields reload only when the agent changes or nothing is being typed (plDirty): the SSE refresh

@@ -773,6 +773,19 @@
   #bd-add textarea { min-height: 44px; }
   .tb-dot.todo, .tb-dot.dropped { background: var(--gray); } .tb-dot.done { background: var(--green); }
   .tb-head button { margin-left: auto; font-size: 11px; padding: 2px 8px; }
+  .bd-card { text-align: left; color: var(--text); padding: 9px 11px; }
+  .bd-card:hover { border-color: var(--border-strong); }
+  .bd-num { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  /* Hộp thoại không bao giờ cao quá cửa sổ: thân card dài cuộn bên trong. */
+  .modal.bd-m { width: min(640px, 100%); display: grid; gap: 10px; font-size: 13px; }
+  .modal.bd-m h3 { align-items: flex-start; overflow-wrap: anywhere; }
+  .modal.bd-m h3 .bd-num { flex: none; white-space: nowrap; }
+  .bd-m-t { min-width: 0; }
+  .modal.bd-m .st-acts select { width: auto; }
+  #bd-m { display: grid; gap: 10px; min-width: 0; }
+  #bd-m .bd-body { max-height: min(50vh, 420px); overflow-y: auto; background: var(--bg); border-radius: var(--r-ctl);
+    padding: 8px 10px; color: var(--text); }
+  #bd-m-msg:empty { display: none; }
   .bd-body { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
   .st-card.s-dropped { opacity: .75; }
   #bd-cols.bd-five { grid-template-columns: repeat(5, minmax(180px, 1fr)); }
@@ -1791,6 +1804,14 @@
       <button type="submit" class="primary">Delegate</button>
     </div>
   </form>
+</div>
+
+<!-- Card của Board: cột chỉ có số + tiêu đề, mọi thứ còn lại ở đây. Bấm nền đóng: chữ đang gõ là của chính card. -->
+<div id="bd-modal" class="modal-overlay" hidden onclick="if (event.target === this) boardClose()">
+  <div class="modal form-card na bd-m" role="dialog" aria-modal="true" aria-labelledby="bd-m-title">
+    <div id="bd-m"></div>
+    <div id="bd-m-msg" class="form-msg"></div>
+  </div>
 </div>
 
 <!-- Command palette. Bấm nền ĐÓNG được (khác New agent): ở đây không có chữ nào để mất. -->
