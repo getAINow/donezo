@@ -424,7 +424,7 @@ check("the Board tab is wired: picker, four columns, add control", gaps,
 # 24 · Đề xuất của planner chờ NGƯỜI DÙNG: cột Proposed, Approve/Reject gọi /decide, link chỉ http(s)
 # (javascript: thành href là XSS), đếm trên nút tab và một mục trên Home.
 gaps = set()
-cards = JS[JS.index("function bdCard("):JS.index("function boardRender(")]
+cards = JS[JS.index("function bdDialog("):JS.index("function boardRender(")]
 if '["proposed", "Proposed"]' not in JS or 'k !== "proposed" || hasProposed' not in JS:
     gaps.add("BD_COLS needs a Proposed column, shown only when the agent has proposals")
 if ('boardDecideOpen(${c.id}, true)' not in cards or 'boardDecideOpen(${c.id}, false)' not in cards
@@ -441,6 +441,30 @@ if ("Object.entries(HOME.proposed)" not in JS or "openTeam('${esc(ws)}', 'board'
     gaps.add("Home needs one item per workspace with waiting proposals that opens its Board tab")
 check("proposals wait for the user: Proposed column, Approve/Reject, safe link, counts", gaps,
       "a proposal cannot be decided, a javascript: url becomes a link, or nobody sees it waiting")
+# 24b · Card trong cột chỉ có số + tiêu đề (card dài làm cột không đọc lướt được); bấm mở #bd-modal giữ mọi nút.
+gaps = set()
+card = JS[JS.index("function bdCard("):JS.index("function bdDialog(")]
+if '#${c.id}' not in card or "esc(c.title)" not in card or 'onclick="boardOpen(${c.id})"' not in card:
+    gaps.add("the compact card must show #<id> and the title and open the dialog on click")
+if not card.lstrip().split("\n", 1)[1].lstrip().startswith("return `<button") or 'aria-label="Card #${c.id}' not in card:
+    gaps.add("the compact card must be a button whose name has the number and title")
+for bad in ("c.body", "c.url", "c.note", "<select", "boardDecideOpen", "boardEditOpen", "boardDelete", "boardMove"):
+    if bad in card:
+        gaps.add(f"the compact card must not hold {bad}: it shows only the number and title")
+for need in ("#${c.id}", "esc(c.body)", "bdLink(c.url)", "esc(c.note)", "boardDecideOpen(${c.id}, true)",
+             "boardDecideOpen(${c.id}, false)", "boardMove(${c.id}", "boardEditOpen(${c.id})", "boardDelete(${c.id})"):
+    if need not in cards:
+        gaps.add(f"the card dialog must hold {need}")
+m = HTML[HTML.index('<div id="bd-modal"'):HTML.index("</div>", HTML.index('id="bd-m-msg"'))]
+if ('class="modal-overlay" hidden' not in m or 'role="dialog" aria-modal="true" aria-labelledby="bd-m-title"' not in m
+        or "event.target === this) boardClose()" not in m):
+    gaps.add("#bd-modal must use the modal-overlay dialog pattern and close on an overlay click")
+if '!$("bd-modal").hidden) boardClose()' not in JS:
+    gaps.add("Escape must close the card dialog")
+if "if (!force && (bdEdit || bdDecide)) return;" not in JS:
+    gaps.add("a live refresh must not redraw the dialog while the user types in it")
+check("Board cards show number and title; the card dialog holds the body and every action", gaps,
+      "the columns are long again, or a card cannot be read or acted on")
 # 23b · Planner của agent đang chọn: panel riêng #bd-planner ngay sau .team-head của tab Board.
 gaps = set()
 bd = HTML[HTML.index('<div id="tab-board" hidden>'):HTML.index('<div id="bd-cols"')]
