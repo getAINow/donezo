@@ -370,6 +370,13 @@ async def case_f():
         text = " ".join(getattr(b, "text", "") for b in (out[0] if isinstance(out, tuple) else out))
         if not text.startswith("⛔ a planner run"):
             leaked.append(f"{t.name}: {text[:80]}")
+    idea = next(c for c in board.list_cards(WS, "dir-1", "proposed") if c["title"].startswith("Idea "))
+    out = await signal_mcp.mcp.call_tool("board_decide", {"from_role": name, "card_id": idea["id"],
+                                                          "approve": True, "workspace_id": WS})
+    text = " ".join(getattr(b, "text", "") for b in (out[0] if isinstance(out, tuple) else out))
+    check("f) board_decide refuses a scout from_role and leaves the proposal waiting",
+          "board_decide" in names and text.startswith("⛔ a planner run can only call board_propose")
+          and board.get(WS, idea["id"])["status"] == "proposed", text[:120])
     check(f"f) every other registered signal tool ({len(names) - 1}) refuses the planner session",
           len(names) > 10 and planner.TOOL in names and "send_signal" in names and not leaked, str(leaked))
     out = await signal_mcp.mcp.call_tool("board_list", {"from_role": "lead"})
@@ -385,6 +392,11 @@ async def case_f():
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1") as c:
         r1 = await c.post("/mcp", json=body, headers={**hdr, "x-orch-planner": "1"}, follow_redirects=True)
         r2 = await c.post("/mcp", json=body, headers=hdr, follow_redirects=True)
+        dec = {**body, "params": {"name": "board_decide", "arguments": {
+            "from_role": "lead", "card_id": idea["id"], "approve": True, "workspace_id": WS}}}
+        r3 = await c.post("/mcp", json=dec, headers={**hdr, "x-orch-planner": "1"}, follow_redirects=True)
+    check("f) board_decide marked X-Orch-Planner is refused even as the director; the proposal still waits",
+          "a planner run can only call" in r3.text and board.get(WS, idea["id"])["status"] == "proposed", r3.text[:200])
     check("f) a request marked X-Orch-Planner is refused even as the director; unmarked it works",
           "a planner run can only call" in r1.text and "Idea one" in r2.text, f"{r1.text[:200]} | {r2.text[:200]}")
 
