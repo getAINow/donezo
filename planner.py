@@ -35,11 +35,15 @@ def migrate(conn):
             every_days INTEGER NOT NULL DEFAULT 7,
             next_run_at TEXT NOT NULL DEFAULT '',    -- '' while switched off
             updated_at TEXT NOT NULL DEFAULT '',
-            waiting TEXT NOT NULL DEFAULT ''         -- agent asked for the brief: '' | 'ask' | 'run' (start once saved)
+            waiting TEXT NOT NULL DEFAULT '',        -- agent asked for the brief: '' | 'ask' | 'run' (start once saved)
+            ask_signal INTEGER NOT NULL DEFAULT 0    -- the latest ask's signal: in progress until its turn ends
         );
     """)
-    if "waiting" not in {r[1] for r in conn.execute("PRAGMA table_info(planners)")}:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(planners)")}
+    if "waiting" not in cols:
         conn.execute("ALTER TABLE planners ADD COLUMN waiting TEXT NOT NULL DEFAULT ''")
+    if "ask_signal" not in cols:
+        conn.execute("ALTER TABLE planners ADD COLUMN ask_signal INTEGER NOT NULL DEFAULT 0")
 
 
 def _in_days(n):
@@ -60,7 +64,7 @@ def _owner(ws, owner_id):
 def settings(owner_id):
     return team._row("SELECT * FROM planners WHERE owner_id = ?", (owner_id,)) or {
         "owner_id": owner_id, "enabled": 0, "brief": "", "every_days": EVERY_DEFAULT,
-        "next_run_at": "", "updated_at": "", "waiting": ""}
+        "next_run_at": "", "updated_at": "", "waiting": "", "ask_signal": 0}
 
 
 def save(ws, owner_id, enabled=None, brief=None, every_days=None):
@@ -91,7 +95,7 @@ def save(ws, owner_id, enabled=None, brief=None, every_days=None):
                "next_run_at = excluded.next_run_at, updated_at = excluded.updated_at",
                (owner_id, int(on), brief, every, nxt, team._so()._now()))
     if brief and cur["waiting"]:
-        team._exec("UPDATE planners SET waiting = '' WHERE owner_id = ?", (owner_id,))
+        team._exec("UPDATE planners SET waiting = '', ask_signal = 0 WHERE owner_id = ?", (owner_id,))
         if cur["waiting"] == "run":
             try:
                 r = start_scout(owner_id)
@@ -112,20 +116,24 @@ def save(ws, owner_id, enabled=None, brief=None, every_days=None):
 
 def ask(ws, owner_id, run=False, force=False):
     """Ask the agent to write (or update) its brief: one message. run = start a run once it is saved.
-    While an ask is outstanding (asked, brief still empty) only force sends again."""
+    While an ask is outstanding (asked, brief still empty) only force sends again. While the agent has
+    not finished its turn for the last ask (asking) nothing is sent; force gets an error."""
     s, err = _owner(ws, owner_id)
     if err:
         return {"error": err}
     cur = settings(owner_id)
+    busy = asking(owner_id)
+    if force and busy:
+        return {"error": "the agent was already asked and has not answered yet"}
     waiting = "run" if run or cur["waiting"] == "run" else "ask"
-    send = force or not cur["waiting"] or bool(cur["brief"])
+    send = (force or not cur["waiting"] or bool(cur["brief"])) and not busy
     team._exec("INSERT INTO planners (owner_id, waiting, updated_at) VALUES (?, ?, ?) "
                "ON CONFLICT(owner_id) DO UPDATE SET waiting = excluded.waiting",
                (owner_id, waiting, team._so()._now()))
     if send:
         name, brief = s["name"], cur["brief"]
         now = (f"Your current brief is below. Update it if it is out of date.\n\n{brief}\n\n" if brief else "")
-        team._enqueue(owner_id,
+        sig = team._enqueue(owner_id,
                       f"[PLANNER BRIEF] Write your planner's product brief with "
                       f"planner_brief(from_role=\"{name}\", text=...).\n\n"
                       f"Say what the product is, who uses it, what it does today, what matters now, and "
@@ -134,7 +142,15 @@ def ask(ws, owner_id, run=False, force=False):
                       f"tokens, private names, emails and file paths.\n\n{now}"
                       f"This is a status message: call planner_brief, no reply to the sender is needed.",
                       s.get("workspace_id") or team._so().DEFAULT_WORKSPACE)
+        team._exec("UPDATE planners SET ask_signal = ? WHERE owner_id = ?", (sig, owner_id))
     return {"asked": send, "waiting": waiting}
+
+
+def asking(owner_id):
+    """The last ask's signal is still waiting to be delivered or its turn is still running."""
+    sig = settings(owner_id)["ask_signal"]
+    row = sig and team._row("SELECT status FROM signals WHERE id = ?", (sig,))
+    return bool(row and row["status"] in ("pending", "approved", "processing"))
 
 
 def _active(owner_id):
@@ -163,7 +179,7 @@ def view(ws, owner_id):
         last = {k: st[k] for k in ("id", "status", "reason", "created_at", "ended_at")}
         last.update(proposals=_filed(st), tokens=team._run_totals([st["session_id"]])["tokens"])
     return {"settings": settings(owner_id), "last": last, "running": bool(st and st["status"] in team.ACTIVE),
-            "now": team._so()._now()}
+            "asking": asking(owner_id), "now": team._so()._now()}
 
 
 # ─── The run ─────────────────────────────────────────────────────────────────

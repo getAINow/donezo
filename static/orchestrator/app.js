@@ -4856,7 +4856,7 @@ async function plannerLoad() {
   plannerRender(r);
 }
 
-function plannerRender({ settings: s, last, running, now }) {
+function plannerRender({ settings: s, last, running, asking, now }) {
   if (!plDirty) {
     $("pl-on").checked = !!s.enabled;
     $("pl-brief").value = s.brief;
@@ -4868,6 +4868,9 @@ function plannerRender({ settings: s, last, running, now }) {
     ? `Next run ${plDay(s.next_run_at)} (in ${days} day${days === 1 ? "" : "s"})` : "";
   $("pl-scout").disabled = running;
   $("pl-scout").textContent = running ? "Scouting…" : "Scout now";
+  // Server refuses a second ask until the agent's turn for the first is over (planner.asking).
+  $("pl-ask").disabled = !!asking;
+  $("pl-ask").textContent = asking ? "Asked, waiting for the agent" : "Ask the agent to write it";
   const props = last ? `${last.proposals} proposal${last.proposals === 1 ? "" : "s"}` : "";
   if (running && last) $("pl-last").innerHTML = `<span class="act-st blue"><span class="act-live"></span>Scouting now</span>`
     + ` · started ${esc(plDay(last.created_at))} · ${props} so far`;
@@ -4910,6 +4913,7 @@ async function plannerScout() {
   await plannerLoad().catch(() => {});
 }
 async function plannerAsk() {
+  $("pl-ask").disabled = true;       // a fast double click sends one request
   try {
     await api("/api/planner/ask" + bdQ({}), "POST", { owner_id: plOwner });
     showMsg("pl-msg", "The agent was asked to write the brief.", true);
@@ -4918,6 +4922,7 @@ async function plannerAsk() {
     try { m = JSON.parse(m).error || m; } catch { /* text */ }
     showMsg("pl-msg", m, false);
   }
+  await plannerLoad().catch(() => {});
 }
 function plannerTyped() { plDirty = true; }
 window.plannerSave = plannerSave; window.plannerScout = plannerScout; window.plannerTyped = plannerTyped;

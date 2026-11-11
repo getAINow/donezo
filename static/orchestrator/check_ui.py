@@ -465,7 +465,15 @@ if "plannerLoad().catch(" not in JS[JS.index("async function boardLoad("):JS.ind
     gaps.add("boardLoad must load the planner panel")
 if '"Scouting…" : "Scout now"' not in JS:
     gaps.add("Scout now must show a running state")
-check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now, ask the agent", gaps,
+# One ask at a time: the button is off while the agent has not answered, and from click to reply.
+plr = JS[JS.index("function plannerRender("):JS.index("async function plannerSave(")]
+if not re.search(r"function plannerRender\(\{[^}]*\basking\b", JS) or '$("pl-ask").disabled = !!asking;' not in plr \
+        or '"Asked, waiting for the agent"' not in plr:
+    gaps.add("#pl-ask must be disabled and say it is waiting while an ask is in progress")
+pa = JS[JS.index("async function plannerAsk("):JS.index("function plannerTyped(")]
+if not re.search(r'plannerAsk\(\) \{\s*\$\("pl-ask"\)\.disabled = true;', pa) or "plannerLoad()" not in pa:
+    gaps.add("plannerAsk must disable #pl-ask before the request and reload the panel after it")
+check("the Board tab has the planner panel: switch, brief, interval, Save, Scout now, ask the agent once", gaps,
       "the planner cannot be switched on, scheduled or run from the dashboard")
 
 # 23c · A planner run (scout) is hidden from every team list: counting it as a sub-agent shows
