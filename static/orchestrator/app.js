@@ -42,6 +42,20 @@ function setTheme(pref) {
 function cycleTheme() { setTheme(THEMES[(THEMES.indexOf(themePref()) + 1) % THEMES.length]); }
 window.cycleTheme = cycleTheme; window.setTheme = setTheme;
 
+// Thu sidebar thành rail icon ở mọi bề rộng; class đã đặt từ localStorage ở script đầu index.html.
+function syncSidebarToggle() {
+  const collapsed = document.documentElement.classList.contains("sb-collapsed"), b = $("sb-toggle");
+  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  b.title = label; b.setAttribute("aria-label", label); b.setAttribute("aria-expanded", !collapsed);
+}
+function toggleSidebar() {
+  const collapsed = document.documentElement.classList.toggle("sb-collapsed");
+  try { localStorage.setItem("orch-sb-collapsed", collapsed ? "1" : "0"); } catch { /* private mode */ }
+  syncSidebarToggle();
+}
+window.toggleSidebar = toggleSidebar;
+syncSidebarToggle();
+
 const SIGNAL_BADGE = { pending: "b-gray", approved: "b-blue", processing: "b-blue",
                        done: "b-green", failed: "b-red", denied: "b-red", blocked: "b-amber" };
 const RUN_BADGE = { ok: "b-green", error: "b-red", running: "b-blue" };
