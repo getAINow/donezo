@@ -546,6 +546,18 @@ if 'id="trs-models"' not in HTML or "TEAM.learned_effort" not in JS or "s.effort
 check("the Team tab has no per-role model pickers", gaps,
       "sub-agents always run Claude Opus 5.5; only effort varies")
 
+# Nút thu sidebar: rail hẹp (<900px) và rail người dùng chọn là MỘT bộ rule — chép riêng một khối
+# cho class thu gọn thì sửa một bên là hai bên lệch nhau.
+gaps = set()
+if 'id="sb-toggle"' not in HTML or "aria-expanded" not in HTML[HTML.find('id="sb-toggle"'):][:300]:
+    gaps.add("#sb-toggle button with aria-expanded is missing from the sidebar")
+if 'localStorage.setItem("orch-sb-collapsed"' not in JS or 'getItem("orch-sb-collapsed")' not in HTML:
+    gaps.add("the collapsed state must be saved under orch-sb-collapsed and applied before first paint")
+if HTML.count(".sb-new span, .pane-pick, .sb-search .kbd") != 1 or "sb-collapsed .sidebar" not in HTML:
+    gaps.add("the rail label-hiding rule must exist once and cover the collapsed class")
+check("the sidebar collapses to the shared icon rail and remembers it", gaps,
+      "one toggle, one set of rail rules, one localStorage key")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)
