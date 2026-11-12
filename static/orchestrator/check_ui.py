@@ -558,6 +558,27 @@ if HTML.count(".sb-new span, .pane-pick, .sb-search .kbd") != 1 or "sb-collapsed
 check("the sidebar collapses to the shared icon rail and remembers it", gaps,
       "one toggle, one set of rail rules, one localStorage key")
 
+# Mở workspace thứ ba từng thay luôn tab hiện hành — iframe bị bỏ, terminal của agent đang chạy chết theo.
+gaps = set()
+def fn(name):
+    m = re.search(r"\nfunction " + name + r"\(.*?\n}\n", JS, re.S)
+    return m.group(0) if m else ""
+if "const runningIn = (wsId)" not in JS or "const nRun = runningIn(w.id)" not in JS:
+    gaps.add("one runningIn(wsId) helper must count running agents, and wsCardHtml must use it")
+if "OPEN[ACTIVE] = id" in fn("selectWorkspace") or "runningIn(" not in fn("selectWorkspace") \
+        or "busyOpen(" not in fn("selectWorkspace"):
+    gaps.add("selectWorkspace must replace only an idle pane and show the busy dialog when both are busy")
+if "runningIn(OPEN[i])" not in fn("setPane") or "busyOpen(" not in fn("setPane"):
+    gaps.add("setPane must refuse to replace a pane whose workspace has a running agent")
+if 'id="busy-modal" class="modal-overlay"' not in HTML or 'id="busy-ok"' not in HTML \
+        or 'busyClose()' not in HTML[HTML.find('id="busy-modal"'):][:200] \
+        or '!$("busy-modal").hidden) busyClose()' not in JS:
+    gaps.add("#busy-modal must use the modal-overlay pattern and close with OK, Escape and an overlay click")
+if fn("busyOpen").count("esc(wsName(") < 2:
+    gaps.add("busyOpen must HTML-escape every workspace name")
+check("opening a workspace never closes one with a running agent", gaps,
+      "only an idle pane may be replaced; both busy = nothing changes and a dialog says why")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)

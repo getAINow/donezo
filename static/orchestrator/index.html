@@ -1823,6 +1823,18 @@
   </div>
 </div>
 
+<!-- Workspace bận: mở thêm sẽ đóng pane có agent đang chạy. Bấm nền đóng: không có chữ nào để mất. -->
+<div id="busy-modal" class="modal-overlay" hidden onclick="if (event.target === this) busyClose()">
+  <div class="modal form-card na sg" role="dialog" aria-modal="true" aria-labelledby="busy-title">
+    <h3 id="busy-title">Both workspaces are busy</h3>
+    <p id="busy-msg"></p>
+    <div class="na-foot">
+      <span class="spacer"></span>
+      <button type="button" id="busy-ok" class="primary" onclick="busyClose()">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- Command palette. Bấm nền ĐÓNG được (khác New agent): ở đây không có chữ nào để mất. -->
 <div id="pal" class="modal-overlay pal-ov" hidden onclick="if (event.target === this) palClose()">
   <div class="pal" role="dialog" aria-modal="true" aria-label="Command palette">

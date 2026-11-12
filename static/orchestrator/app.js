@@ -490,6 +490,9 @@ function groupCardHtml(g) {
   </div>`;
 }
 
+// Số agent đang chạy trong một workspace — card Home và luật thay pane dùng chung một định nghĩa.
+const runningIn = (wsId) => HOME.sessions.filter((s) => s.workspace_id === wsId && s.status === "running").length;
+
 // Card workspace: click = mở thành tab. Ô chọn group phải CHẶN click nổi lên card, không thì
 // mỗi lần bấm vào nó là mở luôn workspace.
 function wsCardHtml(w) {
@@ -497,7 +500,7 @@ function wsCardHtml(w) {
   const mine = HOME.sessions.filter((s) => s.workspace_id === w.id);
   const need = needsYou(HOME.signals);
   const nNeed = homeInbox().filter((i) => i.ws === w.id).length;
-  const nRun = mine.filter((s) => s.status === "running").length;
+  const nRun = runningIn(w.id);
   const st = nNeed ? `<span class="ws-st need">needs you</span>`
     : nRun ? `<span class="ws-st run">${nRun} running</span>` : `<span class="ws-st">idle</span>`;
   // Chip = agent người dùng tạo; sub-agent/verifier của đội nằm ở tab Team, chen vào đây là rối.
@@ -629,7 +632,7 @@ window.deleteWs = deleteWs;
 // Tối đa 2 workspace mở cùng lúc. Mỗi cái là một <iframe> (?pane=1) — xem chú thích
 // ở đầu file. iframe KHÔNG BAO GIỜ được di chuyển trong DOM: trình duyệt reload nó,
 // terminal bên trong chết theo. Nên OPEN chỉ push cuối / remove, và thứ tự DOM luôn
-// khớp OPEN; đầy chỗ thì đóng tab hiện hành TRƯỚC rồi mới push.
+// khớp OPEN; đầy chỗ thì thay tại chỗ một slot, không push.
 const MAX_PANES = 2;
 let OPEN = [];        // workspace id đang mở
 let ACTIVE = -1;      // tab đang xem; -1 = màn Home
@@ -729,6 +732,7 @@ function renderShellTabs() {
 function setPane(i, id) {
   if (!id || OPEN[i] === id) return;
   if (id === OPEN[1 - i]) OPEN = [OPEN[1], OPEN[0]];
+  else if (runningIn(OPEN[i])) { renderShellTabs(); return busyOpen([OPEN[i]], id); }   // trả picker về cũ
   else OPEN[i] = id;        // iframe của workspace bị thay do renderPanes dọn
   ACTIVE = i;
   pageLeave();
@@ -804,18 +808,22 @@ function renderPanes() {
 function focusWs(i) { pageLeave(); ACTIVE = i; SPLIT = false; shellSave(); renderShellTabs(); renderPanes(); }
 window.focusWs = focusWs;
 
-// Mở workspace thành tab. Đã mở → nhảy tới nó. Đầy chỗ → đóng tab hiện hành trước
-// (giữ thứ tự DOM khớp OPEN, xem chú thích khối này).
+// Mở workspace thành tab. Đã mở → nhảy tới nó. Đầy chỗ → thay tại chỗ pane không có agent
+// chạy (ưu tiên tab hiện hành); cả hai bận → không đổi gì, báo lý do.
 function selectWorkspace(id) {
+  const i = OPEN.indexOf(id);
+  const a = Math.max(0, ACTIVE);
+  // Đóng iframe là giết terminal của agent đang làm, nên chỉ pane rảnh mới được thay.
+  const j = i < 0 && OPEN.length >= MAX_PANES ? [a, 1 - a].find((k) => !runningIn(OPEN[k])) : -1;
+  if (j === undefined) return busyOpen(OPEN, id);
   // Mở một workspace = đang làm việc trong group của nó → thanh tab phải là group đó.
   const w = WORKSPACES.find((x) => x.id === id);
   if (w && w.group_id) CURGROUP = w.group_id;
-  const i = OPEN.indexOf(id);
   if (i >= 0) return focusWs(i);
   pageLeave();
-  if (OPEN.length >= MAX_PANES) {
-    ACTIVE = Math.max(0, ACTIVE);
-    OPEN[ACTIVE] = id;        // iframe cũ do renderPanes dọn
+  if (j >= 0) {
+    ACTIVE = j;
+    OPEN[j] = id;             // iframe cũ do renderPanes dọn
   } else {
     OPEN.push(id);
     ACTIVE = OPEN.length - 1;
@@ -823,6 +831,18 @@ function selectWorkspace(id) {
   shellSave(); renderHome(); renderShellTabs(); renderPanes();
 }
 window.selectWorkspace = selectWorkspace;
+
+const wsName = (id) => (WORKSPACES.find((w) => w.id === id) || {}).name || id;
+function busyOpen(busy, target) {
+  const names = busy.map((id) => `<b>${esc(wsName(id))}</b>`).join(" and ");
+  $("busy-title").textContent = busy.length > 1 ? "Both workspaces are busy" : "This workspace is busy";
+  $("busy-msg").innerHTML = `${names} still ${busy.length > 1 ? "have" : "has"} agents running. Wait until `
+    + `${busy.length > 1 ? "one of them is" : "it is"} idle, or stop its agents, then open <b>${esc(wsName(target))}</b>.`;
+  $("busy-modal").hidden = false;
+  $("busy-ok").focus();
+}
+function busyClose() { $("busy-modal").hidden = true; }
+window.busyClose = busyClose;
 
 function closeWs(id) {
   OPEN = OPEN.filter((x) => x !== id);
@@ -3349,6 +3369,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("td-modal").hidden) teamDelegateClose();
   if (e.key === "Escape" && !$("sg-modal").hidden) sigClose();
   if (e.key === "Escape" && !$("bd-modal").hidden) boardClose();
+  if (e.key === "Escape" && !$("busy-modal").hidden) busyClose();
 });
 
 // Nút trong danh sách: tên đi qua data-attribute, không qua inline onclick.
