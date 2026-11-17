@@ -376,7 +376,38 @@ def test_stale_registrations():
           all_cfgs() == before, str(all_cfgs()[0])[:200])
 
 
+async def tool_spawn_model():
+    """The signal tool spawn_subagent takes `model` and hands it to the team; a bad one is refused."""
+    import signal_mcp
+    import team
+    signal_mcp._INPROC = True
+    so.register_session("dir-m", "lead-m", cwd=str(TMP), workspace_id=so.DEFAULT_WORKSPACE)
+    team._spawn_bg = lambda coro, st_id="": coro.close()    # row only: no session is started
+    params = __import__("inspect").signature(signal_mcp.spawn_subagent).parameters
+    check("the spawn_subagent tool takes a model, and its docstring describes it",
+          params.get("model") and params["model"].default == ""
+          and "model: sonnet" in (signal_mcp.spawn_subagent.__doc__ or ""), str(list(params)))
+    got = {}
+    for model in ("sonnet", "claude-opus-5-5", ""):
+        res = await signal_mcp.spawn_subagent(from_role="lead-m", playbook="investigate", brief="x",
+                                              done_when="y", effort="low", model=model)
+        st = team.get_subtask(res.split()[1]) if res.startswith("Sub-agent") else {}
+        got[model] = st.get("model")
+        if st:
+            team.cancel(st["id"])
+    check("model passes through the tool: sonnet / full id / empty (low → Sonnet)",
+          got == {"sonnet": "claude-sonnet-5-5", "claude-opus-5-5": "claude-opus-5-5", "": "claude-sonnet-5-5"},
+          str(got))
+    n = team._row("SELECT COUNT(*) n FROM subtasks")["n"]
+    res = await signal_mcp.spawn_subagent(from_role="lead-m", playbook="feature", brief="x",
+                                          done_when="y", model="haiku")
+    check("model='haiku' is refused by the tool, naming the allowed values, with no row made",
+          res.startswith("⛔") and "sonnet, opus" in res
+          and team._row("SELECT COUNT(*) n FROM subtasks")["n"] == n, res)
+
+
 asyncio.run(main())
+asyncio.run(tool_spawn_model())
 test_stale_registrations()
 srv.shutdown()
 db.unlink(missing_ok=True)

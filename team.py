@@ -51,9 +51,11 @@ SYSTEM_PLAYBOOKS = ("verify", "reflect", "scout")
 # Runs the system starts for a director (planner.py: scout): not its sub-agents, no limit slot, no
 # message when they end, not on the Team tab.
 QUIET_KINDS = ("reflect", "scout")
-# Mọi phiên đội (builder, verifier, reflect) chạy đúng model này — không theo director, không theo
-# setting team_models:* cũ (bị bỏ qua). Không đổi model giữa chừng; khó thì nâng effort.
+# Verifier, reflect, scout chạy đúng model này; builder chọn trong TEAM_MODELS lúc tạo — không theo
+# director, không theo setting team_models:* cũ (bị bỏ qua). Không đổi model giữa chừng (mất prompt
+# cache của phiên); khó thì nâng effort.
 TEAM_MODEL = "claude-opus-5-5"
+TEAM_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")
 TEAM_EFFORTS = ("low", "medium", "high", "xhigh")
 VERIFY_EFFORT = "high"
 LEARN_WINDOW = 5       # learned start: nhìn bấy nhiêu việc xong gần nhất cùng playbook
@@ -566,6 +568,13 @@ def start_effort(workspace_id, playbook, effort=""):
     return step_effort(base) if sum(map(_stepped, recent)) >= LEARN_STEPPED else base
 
 
+def builder_model(model, effort):
+    """'sonnet'/'opus'/id đầy đủ → id; rỗng → theo effort khởi đầu. None = giá trị lạ."""
+    if not model:
+        return TEAM_MODELS[0] if effort in ("low", "medium") else TEAM_MODEL
+    return next((m for m in TEAM_MODELS if model in (m, m.split("-")[1])), None)
+
+
 def effort_line(st):
     """'effort: high' hoặc 'effort: medium → high (stepped up …)'. Rỗng: handoff / việc cũ."""
     a, b = st.get("effort_start") or "", st.get("effort") or ""
@@ -658,7 +667,7 @@ def _outcome_msg(st, passed):
         head = "[HANDOFF VERIFIED]" if passed else "[HANDOFF FAILED]"
     lines = [f"{head} {st['id']} · {st['title'] or st['playbook']}"]
     if effort_line(st):
-        lines.append(effort_line(st))
+        lines.append(" · ".join(filter(None, (st.get("model"), effort_line(st)))))
     if passed and st.get("branch"):
         lines.append(f"Verified at commit {st['head_sha'][:12]} on branch {st['branch']}. "
                      f"Review: git diff HEAD...{st['branch']}  ·  take it: git merge --no-ff {st['branch']}")
@@ -694,7 +703,7 @@ def _active_count(director_id):
     return r["n"] if r else 0
 
 
-def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="", card_id=0):
+def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="", card_id=0, model=""):
     """Xếp hàng một sub-agent. Trả {id, status} ngay — dựng phiên (một lượt CLI đầy đủ) chạy nền,
     director không phải chờ. Lỗi lúc dựng: subtask 'failed' kèm lý do + báo director."""
     so = _so()
@@ -717,6 +726,10 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     if effort and effort not in TEAM_EFFORTS:
         return {"error": f"effort must be one of: {', '.join(TEAM_EFFORTS)} (or empty for the "
                          f"playbook's default)"}
+    model = str(model or "").strip().lower()
+    if model and not builder_model(model, ""):
+        return {"error": f"model must be one of: sonnet, opus, {', '.join(TEAM_MODELS)} (or empty to "
+                         f"follow the effort: low/medium → sonnet, high/xhigh → opus)"}
     if _active_count(director_id) >= MAX_ACTIVE:
         return {"error": f"{MAX_ACTIVE} sub-agents are already active for you — wait for one to "
                          f"finish (or cancel one). Fewer, deeper units beat many shallow ones."}
@@ -726,11 +739,12 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     if card_id and (err := board.check_link(ws, card_id, director_id)):
         return {"error": err}
     effort = start_effort(ws, playbook, effort)
+    model = builder_model(model, effort)
     _exec("INSERT INTO subtasks (id, workspace_id, director_id, kind, playbook, title, brief, "
           "done_when, model, effort_start, effort, status, created_at, updated_at) "
           "VALUES (?, ?, ?, 'subagent', ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
           (st_id, ws, director_id, playbook, str(title or "")[:120], str(brief), str(done_when),
-           TEAM_MODEL, effort, effort, now, now))
+           model, effort, effort, now, now))
     so.publish({"type": "team", "subtask": st_id, "status": "queued",
                 "workspace_id": director.get("workspace_id")})
     if card_id:
@@ -740,13 +754,13 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     return {"id": st_id, "status": "queued"}
 
 
-async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo):
-    """Dựng một phiên đội trên TEAM_MODEL ở mức effort cho trước. Trả (session, err)."""
+async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo, model=TEAM_MODEL):
+    """Dựng một phiên đội trên model (mặc định TEAM_MODEL) ở mức effort cho trước. Trả (session, err)."""
     so = _so()
     # Theo cwd, không theo repo: subtask handoff không lưu repo mà verifier của nó vẫn chạy ở đây.
     await asyncio.to_thread(_exclude_team_skills, cwd)
     res = await so.engine_for("claude").spawn(
-        name, cwd=cwd, skill=playbook_text(playbook, repo), model=TEAM_MODEL,
+        name, cwd=cwd, skill=playbook_text(playbook, repo), model=model,
         effort=effort, permission_mode=director.get("permission_mode", ""),
         workspace_id=workspace_id)
     if not res or res.get("error"):
@@ -783,7 +797,7 @@ async def _start_subagent(st_id):
         return
     name = f"sub-{st_id[3:]}-{st['playbook']}"
     sess, err = await _spawn_session(name, cwd, st["playbook"], st["effort"], director,
-                                     st["workspace_id"], repo)
+                                     st["workspace_id"], repo, st["model"])
     if err:
         return _fail(get_subtask(st_id), f"could not start the sub-agent: {err}")
     _set_team(sess["id"], director["id"], "subagent")
@@ -1606,7 +1620,8 @@ def overview(workspace_id, page=None):
         "directors": sorted(directors, key=lambda d: (-d["active"], d["name"])),
         **paged, "decisions": decisions, "proposals": proposals,
         "edges": edges(workspace_id), "graph_mode": graph_mode(workspace_id),
-        "team_model": TEAM_MODEL, "learned_effort": {p: start_effort(workspace_id, p) for p in PLAYBOOKS},
+        "team_model": TEAM_MODEL, "team_models": TEAM_MODELS,
+        "learned_effort": {p: start_effort(workspace_id, p) for p in PLAYBOOKS},
         "playbooks": list(PLAYBOOKS), "max_active": MAX_ACTIVE, "max_attempts": MAX_ATTEMPTS,
         # Mốc giờ CỦA SERVER: mọi timestamp là giờ local không múi của server, trình duyệt ở múi
         # khác thì tự tính tuổi sẽ lệch đúng số giờ chênh — dashboard đo lệch theo mốc này.
