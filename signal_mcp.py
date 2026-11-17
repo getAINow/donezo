@@ -356,10 +356,10 @@ def _caller(from_role: str, workspace_id: str = ""):
 
 @mcp.tool()
 async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: str, title: str = "",
-                         effort: str = "", workspace_id: str = "", card_id: int = 0):
+                         effort: str = "", workspace_id: str = "", card_id: int = 0, model: str = ""):
     """Delegate one unit of work to a new sub-agent (pstack style). Returns its subtask id at once;
     the orchestrator messages you [SUB-AGENT PASSED] or [SUB-AGENT FAILED] when it is done.
-    Sub-agents and verifiers always run Claude Opus 5.5.
+    A verifier always runs Claude Opus 5.5; the sub-agent runs Sonnet 5.5 or Opus 5.5 (see model).
 
     Args:
         from_role: your exact session name.
@@ -375,6 +375,9 @@ async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: s
                high = cross-module, concurrency, security; xhigh = hard bugs. Empty = medium for
                investigate, high otherwise. A verifier FAIL steps it up one level automatically,
                so start as low as the task honestly allows.
+        model: sonnet = mechanical and normal work; opus = cross-module, concurrency, security,
+               hard bugs. Empty = follow the starting effort (low/medium → sonnet, high/xhigh →
+               opus). It never changes during the task; a FAIL raises only the effort.
         workspace_id: your workspace, if your name exists in several.
         card_id: the board card this works on (board_list); it follows the sub-agent's status.
     """
@@ -382,7 +385,7 @@ async def spawn_subagent(from_role: str, playbook: str, brief: str, done_when: s
     if err:
         return err
     import team
-    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, effort, card_id)
+    res = team.spawn_subagent(me["id"], playbook, brief, done_when, title, effort, card_id, model)
     if res.get("error"):
         return f"⛔ {res['error']}"
     return (f"Sub-agent {res['id']} queued ({playbook}). End your turn when you have delegated "

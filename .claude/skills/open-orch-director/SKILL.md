@@ -56,7 +56,10 @@ Never guess a file path, a symbol or an API. Read the real thing first.
   - `effort`: `low` = mechanical (renames, text, config); `medium` = normal features and fixes;
     `high` = cross-module, concurrency, security; `xhigh` = hard bugs. Empty = `medium` for
     `investigate`, `high` otherwise. A verifier FAIL steps it up one level automatically, so
-    start as low as the task honestly allows. Sub-agents always run Claude Opus 5.5.
+    start as low as the task honestly allows.
+  - `model`: `sonnet` = mechanical and normal work; `opus` = cross-module, concurrency, security,
+    hard bugs. Empty follows the effort (`low`/`medium` → Sonnet 5.5, `high`/`xhigh` → Opus 5.5).
+    A verifier always runs Claude Opus 5.5.
 - `list_subagents(from_role="open-orch-director")` — status of everything you delegated.
 - `cancel_subagent(from_role="open-orch-director", subtask_id=...)` — stop one that is going wrong.
 - `record_decision(from_role="open-orch-director", decision=..., reason=..., evidence=...)` — log every

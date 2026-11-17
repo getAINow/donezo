@@ -282,8 +282,8 @@ async def case_c():
           so.get_session("dir-1")["permission_mode"] == "bypassPermissions" and argv.count("--permission-mode") == 1
           and mode not in ("bypassPermissions", None) and "--dangerously-skip-permissions" not in argv
           and "--allow-dangerously-skip-permissions" not in argv, str(argv))
-    check("c) TEAM_MODEL, effort medium, a fixed spend limit",
-          flag(argv, "--model") == team.TEAM_MODEL and flag(argv, "--effort") == "medium"
+    check("c) claude-opus-5-5, effort medium, a fixed spend limit",
+          flag(argv, "--model") == "claude-opus-5-5" and flag(argv, "--effort") == "medium"
           and flag(argv, "--max-budget-usd") == planner.MAX_BUDGET_USD, str(argv))
     scout = so.get_session(team.get_subtask(S["b"])["session_id"])
     try:
@@ -296,7 +296,7 @@ async def case_c():
     sub = team.get_subtask(S["sub"])
     n = call_with(f"[SUB-AGENT TASK {S['sub']}")
     want = [so.CLAUDE_BIN, "-p", "--session-id", sub["session_id"], "--output-format", "json",
-            "--permission-mode", "bypassPermissions", "--model", team.TEAM_MODEL, "--effort", "medium"]
+            "--permission-mode", "bypassPermissions", "--model", "claude-sonnet-5-5", "--effort", "medium"]
     check("c) a normal sub-agent's command line is unchanged", n and n["argv"] == want,
           f"{n and n['argv']} != {want}")
 

@@ -102,7 +102,8 @@ merge is not recognised, so use <span class="ui">Discard</span> for those.</p>
     <code>medium</code> for investigate, <code>high</code> otherwise). Each fail moves it one level up, to
     <code>xhigh</code> at most. The verifier runs at <code>high</code>, or <code>xhigh</code> when it is re-run because
     the last one gave no verdict. If 2 of the last 5 tasks of a playbook needed a step-up, new ones start one level higher.
-    Cards and messages to the director show the effort, for example <code>effort: medium → high</code>.</li>
+    The model never changes. Cards show both, for example <code>Sonnet 5.5 · effort: medium → high</code>;
+    messages to the director show the same line with the model id, <code>claude-sonnet-5-5</code>.</li>
   <li><strong>It stops at a limit.</strong> After 3 failed verifications (<code>ORCH_SUBTASK_MAX_ATTEMPTS</code>) the work is
     marked failed, the director is told, and it shows up on <a href="control.html#home">Home</a>.</li>
 </ul>
@@ -213,8 +214,10 @@ sub-agent show its task id. Read it when you want to know why the work was split
     signal any other. <span class="ui">Enforced — only these edges may signal</span> allows only the sender and receiver
     pairs you listed. Add them with <span class="ui">Add edge</span>, or with
     <span class="ui">Learn from recent signals</span>. People and sub-agent results always get through.</li>
-  <li><span class="ui">Sub-agents and verifiers</span>: they always run Claude Opus 5.5, whatever model the director
-    uses. The line also shows the <em>learned start</em>: the effort each playbook starts at right now.</li>
+  <li><span class="ui">Sub-agents and verifiers</span>: whatever model the director uses, a sub-agent runs
+    Claude Sonnet 5.5 or Opus 5.5 and a verifier always runs Opus 5.5. The director picks the sub-agent's model; if it
+    does not, low or medium effort gets Sonnet 5.5 and high or xhigh gets Opus 5.5. Each sub-agent shows its model next
+    to its effort. The line also shows the <em>learned start</em>: the effort each playbook starts at right now.</li>
 </ul>
 
 <h2 id="reflect">Reflect</h2>

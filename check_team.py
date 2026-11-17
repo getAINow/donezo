@@ -191,7 +191,7 @@ WS2 = so.create_workspace("effort")["id"]
 EFF = {}          # case → subtask ids it made
 
 
-def lead2(label, model):
+def lead2(label, model, ws=None):
     """A director in WS2 on a non-Opus model at effort max: neither may leak into its team."""
     repo = TMP / f"eff-{label}"
     repo.mkdir()
@@ -202,13 +202,13 @@ def lead2(label, model):
     git("add", "-A", cwd=repo)
     git("commit", "-q", "-m", "init", cwd=repo)
     so.register_session(f"dir-e{label}", f"lead-e{label}", cwd=str(repo), model=model, effort="max",
-                        workspace_id=WS2)
+                        workspace_id=ws or WS2)
     return f"dir-e{label}"
 
 
-async def run_one(director, playbook, effort="", verify=("PASS",), build=None):
+async def run_one(director, playbook, effort="", verify=("PASS",), build=None, model=""):
     r = team.spawn_subagent(director, playbook, f"do {playbook}", "it works", title=playbook,
-                            **({"effort": effort} if effort else {}))
+                            **({"effort": effort} if effort else {}), **({"model": model} if model else {}))
     st_id = r["id"]
     VERIFY_PLAN[st_id] = list(verify)
     if build:
@@ -240,21 +240,22 @@ async def case_pinned_model():
     so.set_setting(f"team_models:{WS2}", json.dumps({"implement": "agy", "investigate": "agy",
                                                      "verify": "agy:gemini-3.1-pro-high"}))
     opus = "claude-opus-5-5"   # literal: the pin itself is under test
-    for label, model, playbook in (("agy", "agy:gemini-3.1-pro-high", "feature"),
-                                   ("son", "sonnet", "investigate")):
+    # Builder model follows the start effort (feature high → Opus, investigate medium → Sonnet).
+    for label, model, playbook, want in (("agy", "agy:gemini-3.1-pro-high", "feature", opus),
+                                         ("son", "sonnet", "investigate", "claude-sonnet-5-5")):
         d = lead2(label, model)
         st = await run_one(d, playbook, build=["read"] if playbook == "investigate" else None)
         EFF.setdefault("a", []).append(st["id"])
         b, v = session_of(st["session_id"]), session_of(st["verifier_id"])
-        check(f"a) director on {model} + saved team_models=agy → builder and verifier run {opus}",
-              opus == "claude-opus-5-5" and st["status"] == "passed" and st["model"] == opus
-              and b.get("model") == opus and v.get("model") == opus
+        check(f"a) director on {model} + saved team_models=agy → builder runs {want}, verifier {opus}",
+              st["status"] == "passed" and st["model"] == want
+              and b.get("model") == want and v.get("model") == opus
               and so.engine_name_of_session(b) == so.engine_name_of_session(v) == "claude"
-              and models(b["id"]) == models(v["id"]) == {opus},
+              and models(b["id"]) == {want} and models(v["id"]) == {opus},
               f"{st['status']} {st['reason']} row={st['model']} builder={b.get('model')} verifier={v.get('model')}")
     import inspect
     params = inspect.signature(signal_mcp.spawn_subagent).parameters
-    check("a) MCP spawn_subagent takes effort and no model", "effort" in params and "model" not in params,
+    check("a) MCP spawn_subagent takes effort and model", "effort" in params and "model" in params,
           str(list(params)))
 
 
@@ -338,6 +339,45 @@ async def case_director_line():
     check("f) the Team tab gets the same effort line per task",
           items[EFF["c"][0]]["effort_line"] == "effort: medium → xhigh (stepped up 2 levels after a verifier FAIL)"
           and items[EFF["a"][0]]["effort_line"] == "effort: high", str({k: v["effort_line"] for k, v in items.items()}))
+
+
+async def case_builder_model():
+    """Builder runs Sonnet 5.5 or Opus 5.5; verifier stays Opus 5.5 at high; a FAIL keeps the model."""
+    sonnet, opus = "claude-sonnet-5-5", "claude-opus-5-5"   # literals: the pool itself is under test
+    d = lead2("mod", "sonnet", so.create_workspace("model")["id"])   # own workspace: no learned step-up
+    for label, kw, want in (("a", {"effort": "medium"}, (sonnet, "medium")),
+                            ("b", {"effort": "high"}, (opus, "high")),
+                            ("c", {"model": "sonnet", "effort": "xhigh"}, (sonnet, "xhigh")),
+                            ("d", {"model": "opus", "effort": "low"}, (opus, "low"))):
+        st = await run_one(d, "feature", **kw)
+        EFF.setdefault("g", []).append(st["id"])
+        got = (models(st["session_id"]), efforts(st["session_id"]))
+        check(f"g{label}) {kw} → builder started with {want[0]} at {want[1]}",
+              st["status"] == "passed" and st["model"] == want[0] and got == ({want[0]}, [want[1]]),
+              f"{st['status']} {st['reason']} row={st['model']} argv={got}")
+        vs = [s for s in so.list_sessions() if s.get("team_role") == "verifier"
+              and s["name"].startswith(f"sub-{st['id'][3:]}-verify")]
+        check(f"g{label}) …its verifier started with {opus} at high",
+              len(vs) == 1 and models(vs[0]["id"]) == {opus} and verifier_efforts(st["id"]) == [["high"]],
+              f"{[models(v['id']) for v in vs]} {verifier_efforts(st['id'])}")
+    plain = next((p for n, p in SEEN if n == "lead-emod" and EFF["g"][0] in p and "[SUB-AGENT PASSED]" in p), "")
+    check("g) the PASSED message names the builder's model on the effort line",
+          f"{sonnet} · effort: medium\n" in plain, plain[:300])
+    st = await run_one(d, "feature", effort="medium", verify=("FAIL", "PASS"))
+    vs = sorted((s for s in so.list_sessions() if s.get("team_role") == "verifier"
+                 and s["name"].startswith(f"sub-{st['id'][3:]}-verify")), key=lambda s: s["name"])
+    check("gf) a FAIL resumes the same Sonnet builder one level up; each verifier is Opus at high",
+          st["status"] == "passed" and models(st["session_id"]) == {sonnet}
+          and efforts(st["session_id"]) == ["medium", "high"] and session_of(st["session_id"]).get("model") == sonnet
+          and len(RUNS[session_of(st["session_id"])["name"]]) == 2
+          and [models(v["id"]) for v in vs] == [{opus}, {opus}] and verifier_efforts(st["id"]) == [["high"], ["high"]],
+          f"{st['status']} builder={models(st['session_id'])} {efforts(st['session_id'])} "
+          f"verifiers={[models(v['id']) for v in vs]} {verifier_efforts(st['id'])}")
+    n = team._row("SELECT COUNT(*) n FROM subtasks")["n"]
+    bad = team.spawn_subagent(d, "feature", "x", "y", model="haiku")
+    check("gg) model='haiku' is refused naming the allowed values, and no row is made",
+          all(w in bad.get("error", "") for w in ("sonnet", "opus", sonnet, opus))
+          and team._row("SELECT COUNT(*) n FROM subtasks")["n"] == n, str(bad))
 
 
 async def case_sweep():
@@ -637,6 +677,9 @@ async def main():
     props = team._rows("SELECT * FROM skill_proposals WHERE subtask_id = ?", (rid,))
     check("reflection on a playbook with failures produces one proposal",
           rst.get("status") == "passed" and len(props) == 1, f"{r} {rst.get('status')} {rst.get('reason')}")
+    check("reflection starts with claude-opus-5-5 at high",
+          models(rst.get("session_id", "")) == {"claude-opus-5-5"} and efforts(rst.get("session_id", "")) == ["high"],
+          f"{models(rst.get('session_id', ''))} {efforts(rst.get('session_id', ''))}")
     override = team.override_path(str(REPO), "feature")
     check("nothing is written before a human approves", not override.exists())
     res = team.decide_proposal(props[0]["id"], True) if props else {"error": "no proposal"}
@@ -911,7 +954,8 @@ async def main():
     # stepped up plenty) must not leak into it. Each case runs on its own so a crash in one (on
     # code without effort support) is reported as that case failing, not as the whole file dying.
     for name, case in (("a", case_pinned_model), ("b", case_effort_passthrough), ("c", case_step_up),
-                       ("d", case_verifier_effort), ("e", case_learned_start), ("f", case_director_line)):
+                       ("d", case_verifier_effort), ("e", case_learned_start), ("f", case_director_line),
+                       ("g", case_builder_model)):
         try:
             await case()
         except Exception as e:  # noqa: BLE001
