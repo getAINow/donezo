@@ -579,6 +579,12 @@ if fn("busyOpen").count("esc(wsName(") < 2:
 check("opening a workspace never closes one with a running agent", gaps,
       "only an idle pane may be replaced; both busy = nothing changes and a dialog says why")
 
+# Team tab: model trước dòng effort, nhưng row cũ không có model thì không được ra "auto · " / "None · ".
+check("a sub-task card shows its model before the effort only when it has one",
+      set() if '${s.model ? modelLabel(s.model) + " · " : ""}${s.effort_line}' in fn("stCard")
+      else {"stCard must add the model part only when s.model is set"},
+      "an empty model must leave the plain effort line")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)

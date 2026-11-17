@@ -4513,7 +4513,7 @@ function stCard(s, i, sc = "t") {
         <p>${stLines(v.findings || v.evidence || s.reason, 3)}</p></div>` : ""}
     ${s.status === "passed" && v.verdict === "PASS" ? `<div class="st-ok">Verified${v.sha ? ` at <code>${esc(v.sha.slice(0, 7))}</code>` : ""}</div>
         <div class="st-note">Director notified${canDiff ? " · waiting to merge" : ""}</div>` : ""}
-    ${s.effort_line ? `<div class="st-note">${esc(`${modelLabel(s.model)} · ${s.effort_line}`)}</div>` : ""}
+    ${s.effort_line ? `<div class="st-note">${esc(`${s.model ? modelLabel(s.model) + " · " : ""}${s.effort_line}`)}</div>` : ""}
     <div class="st-meta"><span>${s.status === "cancelled" && sc !== "i" ? badge("cancelled", "b-gray") : attempt}</span>
       <span class="st-age" data-since="${esc(since)}"${live ? ` title="Running for"` : ` data-ago="1" title="Finished"`}>${since ? fmtAge(secsSince(since)) + (live ? "" : " ago") : ""}</span></div>
     <div class="st-acts">${primary}<details><summary>Details</summary><div>

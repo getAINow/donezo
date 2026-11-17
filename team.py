@@ -667,7 +667,7 @@ def _outcome_msg(st, passed):
         head = "[HANDOFF VERIFIED]" if passed else "[HANDOFF FAILED]"
     lines = [f"{head} {st['id']} · {st['title'] or st['playbook']}"]
     if effort_line(st):
-        lines.append(f"{st['model']} · {effort_line(st)}")
+        lines.append(" · ".join(filter(None, (st.get("model"), effort_line(st)))))
     if passed and st.get("branch"):
         lines.append(f"Verified at commit {st['head_sha'][:12]} on branch {st['branch']}. "
                      f"Review: git diff HEAD...{st['branch']}  ·  take it: git merge --no-ff {st['branch']}")

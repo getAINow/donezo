@@ -373,6 +373,10 @@ async def case_builder_model():
           and [models(v["id"]) for v in vs] == [{opus}, {opus}] and verifier_efforts(st["id"]) == [["high"], ["high"]],
           f"{st['status']} builder={models(st['session_id'])} {efforts(st['session_id'])} "
           f"verifiers={[models(v['id']) for v in vs]} {verifier_efforts(st['id'])}")
+    old = team.get_subtask(EFF["g"][0])
+    msgs = [team._outcome_msg({**old, "model": m}, True) for m in ("", None)]
+    check("ge) a row with an empty/NULL model: no 'None', just the effort line",
+          all("None" not in m and "\neffort: medium\n" in m for m in msgs), str(msgs)[:300])
     n = team._row("SELECT COUNT(*) n FROM subtasks")["n"]
     bad = team.spawn_subagent(d, "feature", "x", "y", model="haiku")
     check("gg) model='haiku' is refused naming the allowed values, and no row is made",
