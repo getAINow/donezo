@@ -297,7 +297,7 @@ async def case_c():
     n = call_with(f"[SUB-AGENT TASK {S['sub']}")
     want = [so.CLAUDE_BIN, "-p", "--session-id", sub["session_id"], "--output-format", "json",
             "--permission-mode", "bypassPermissions", "--model", "claude-sonnet-5-5", "--effort", "medium"]
-    check("c) a normal sub-agent's command line is unchanged", n and n["argv"] == want,
+    check("c) a normal sub-agent's command line has no planner flags (medium → Sonnet 5.5)", n and n["argv"] == want,
           f"{n and n['argv']} != {want}")
 
 
