@@ -14,6 +14,7 @@ What can go wrong quietly:
     python3 check_workflow_run.py
 """
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -622,6 +623,54 @@ async def main():
     check("h) nothing is left running", not team._rows("SELECT id FROM workflow_runs WHERE status = 'running'"))
     check("h) git status of the repo is clean at the end", git("status", "--porcelain", cwd=REPO) == "",
           git("status", "--porcelain", cwd=REPO))
+
+    # ── j) the Team overview and the dashboard's Stop ───────────────────────
+    def seed(rid, did, status, step, reports, reason="", ended=""):
+        steps = [{"role": r, "job": f"{r} job", "playbook": "SECRET PLAYBOOK TEXT", "tools": []}
+                 for r in ("w1", "w2", "w3")]
+        team._exec("INSERT INTO workflow_runs (id, director_id, workspace_id, name, purpose, job, steps, status, "
+                   "step, reports, reason, created_at, updated_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (rid, did, WS, "seeded", "p", "make it", json.dumps(steps), status, step,
+                    json.dumps(reports), reason, "2026-01-01T00:00:00", "2026-01-01T00:00:00", ended))
+    team._exec("DELETE FROM workflow_runs")
+    seed("wf_run00001", "dir-1", "running", 1, {"w1": "w1 did it"})
+    seed("wf_run00002", "peer-1", "stopped", 2, {"w1": "a", "w2": "b"}, "w3 failed twice", "2026-01-01T01:00:00")
+    t = (await api.get("/api/team", params={"workspace_id": WS})).json()
+    byid = {r["id"]: r for r in t["workflows"]}
+    run_, stop_ = byid.get("wf_run00001", {}), byid.get("wf_run00002", {})
+    check("j) overview lists the running and the stopped run", set(byid) == {"wf_run00001", "wf_run00002"}, list(byid))
+    check("j) running run: steps done, current, pending in order, step 1's report, job and director",
+          [x["state"] for x in run_.get("steps", [])] == ["done", "current", "pending"]
+          and run_["steps"][0]["report"] == "w1 did it" and run_["steps"][1]["job"] == "w2 job"
+          and run_["director_name"] == "lead" and run_["job"] == "make it", run_)
+    check("j) stopped run: reason and the step it stopped at",
+          stop_.get("reason") == "w3 failed twice"
+          and [x["state"] for x in stop_["steps"]] == ["done", "done", "stopped"], stop_)
+    check("j) no playbook text anywhere in the payload", "SECRET PLAYBOOK" not in json.dumps(t))
+    for i in range(6):
+        seed(f"wf_old0000{i}", "peer-1", "done", 2, {}, "", f"2026-01-02T0{i}:00:00")
+    t = (await api.get("/api/team", params={"workspace_id": WS})).json()
+    ended = [r["id"] for r in t["workflows"] if r["status"] != "running"]
+    check("j) only the 5 most recently ended runs are listed", len(ended) == 5 and "wf_run00002" not in ended, ended)
+    check("j) a run in another workspace is not listed",
+          (await api.get("/api/team", params={"workspace_id": "ws_other"})).json()["workflows"] == [])
+
+    before = len(to_director())
+    r = await api.post("/api/workflows/runs/wf_run00001/cancel")
+    msgs = to_director()[before:]
+    check("j) Stop: 200, run cancelled, the director told once and asked not to reply",
+          r.status_code == 200 and workflow.get_run("wf_run00001")["status"] == "cancelled"
+          and workflow.get_run("wf_run00001")["reason"] == "cancelled by the user"
+          and len(msgs) == 1 and "by the user" in msgs[0] and msgs[0].endswith("Do not reply to this."),
+          (r.status_code, msgs))
+    r = await api.post("/api/workflows/runs/wf_run00001/cancel")
+    check("j) Stop twice: an error and no second message", r.status_code == 400 and len(to_director()[before:]) == 1,
+          (r.status_code, to_director()[before:]))
+    check("j) Stop of an unknown run is 404", (await api.post("/api/workflows/runs/wf_nope/cancel")).status_code == 404)
+
+    check("j) a card given by a workflow role names the role, not the session",
+          team._giver_name({"name": "sub-ab12cd34-2-code-reviewer", "team_role": "role"}) == "code-reviewer"
+          and team._giver_name({"name": "lead", "team_role": ""}) == "lead")
 
 
 async def with_api():

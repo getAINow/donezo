@@ -421,18 +421,55 @@ async def _advance(run, result):
     await _start_step(run["id"])
 
 
+def _cancel(run, reason):
+    if run["session_id"]:
+        team._kill(run["session_id"])
+    if _update_run(run["id"], status="cancelled", reason=reason) is None:
+        return {"error": "it ended in the meantime."}
+    _close_visit(run)
+    return {"id": run["id"]}
+
+
 def cancel_run(director_id):
     """Cancel the director's running run: the role killed, its messages denied, its sub-agents
     cancelled. No message."""
     run = running_for(director_id)
+    return _cancel(run, "cancelled by the director") if run else {"error": "you have no running workflow."}
+
+
+def cancel_by_user(run_id):
+    """The dashboard's Stop: same as cancel_run, and the director is told once."""
+    run = get_run(run_id)
     if not run:
-        return {"error": "you have no running workflow."}
-    if run["session_id"]:
-        team._kill(run["session_id"])
-    if _update_run(run["id"], status="cancelled", reason="cancelled by the director") is None:
-        return {"error": "it ended in the meantime."}
-    _close_visit(run)
-    return {"id": run["id"]}
+        return {"error": "not found"}
+    if run["status"] != "running":
+        return {"error": f"already {run['status']}"}
+    res = _cancel(run, "cancelled by the user")
+    if "error" not in res and team._so().get_session(run["director_id"]):
+        team._enqueue(run["director_id"], f"[WORKFLOW CANCELLED] {run['id']} · {run['name']} was cancelled by "
+                      f"the user from the dashboard. Do not reply to this.", run["workspace_id"])
+    return res
+
+
+def overview(workspace_id, sessions):
+    """The Team tab's workflow runs: every running one and the 5 latest ended, steps in order with the
+    role's job, a state and its report. Playbooks are never sent."""
+    rows = team._rows("SELECT * FROM workflow_runs WHERE workspace_id = ? AND status = 'running' "
+                      "ORDER BY created_at DESC", (workspace_id,)) + team._rows(
+        "SELECT * FROM workflow_runs WHERE workspace_id = ? AND status != 'running' "
+        "ORDER BY ended_at DESC, rowid DESC LIMIT 5", (workspace_id,))
+    out = []
+    for run in map(_load_run, rows):
+        def state(i):
+            if run["status"] == "done" or i < run["step"]:
+                return "done"
+            return ("current" if run["status"] == "running" else "stopped") if i == run["step"] else "pending"
+        out.append({
+            **{k: run[k] for k in ("id", "name", "job", "status", "reason", "created_at", "ended_at")},
+            "director_name": (sessions.get(run["director_id"]) or {}).get("name", ""),
+            "steps": [{"role": s["role"], "job": s["job"], "state": state(i),
+                       "report": run["reports"].get(s["role"], "")} for i, s in enumerate(run["steps"])]})
+    return out
 
 
 def on_session_removed(session_id):

@@ -81,6 +81,31 @@ Spawn sub-agents as the last thing in your turn, then end the turn. The orchestr
 you when each one finishes: `[SUB-AGENT PASSED]` after an independent verifier observed
 `done_when`, `[SUB-AGENT FAILED]` when it ran out of attempts. Do not poll.
 
+## Workflows
+
+- A workflow is an ordered list of roles you define. Each role has one job, a playbook you write and
+  a tool list. The roles run one after the other in your folder, each as a fresh session that
+  delegates to sub-agents the way you do.
+- Use one when the goal needs the same sequence of distinct jobs more than once, or when the one
+  who makes the work must not be the one who approves it. Otherwise delegate to sub-agents directly.
+- `define_workflow(from_role="open-orch-director", name=..., purpose=..., steps=[{role, job, playbook, tools}, ...])`
+  saves or replaces one. `list_workflows(from_role="open-orch-director")` shows yours.
+  `run_workflow(from_role="open-orch-director", name=..., job=..., from_step=1)` starts a run.
+  `cancel_workflow(from_role="open-orch-director")` stops the running one.
+- A role's playbook says: who the role is, its one job, what it receives (the run's job and the
+  earlier roles' reports), how it checks its own work, and what its report must contain. A reviewer
+  role's playbook says what to check and when to send the work back. A role remembers nothing
+  between runs: what must last goes into the project.
+- `tools`: exact tool names, only what the job needs. Reading files, git and the delegate and
+  finish tools come with every role. Edit, Write, the full shell, web tools and each MCP tool must
+  be listed.
+- Roles run in order on purpose: work a tool does outside the repo cannot be undone or isolated.
+- While a run is active, end your turn. Do not edit or merge in the folder. You cannot spawn
+  sub-agents until it ends.
+- `[WORKFLOW STOPPED]`: read the findings and fix the cause. Rewrite that role's playbook with
+  `define_workflow`, or change the job. Then `run_workflow(..., from_step=N)`. Never resume blindly;
+  ask the user when the cause is unclear.
+
 ## Taking the work
 
 A pass means the verifier observed `done_when` at a specific commit. Before merging:

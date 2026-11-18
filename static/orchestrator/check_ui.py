@@ -599,6 +599,23 @@ if '"/api/git/setup"' not in setup or setup.count("await spawnAgent()") != 1:
 check("a director without git gets a Set up git here button that retries the spawn", gaps,
       "the dialog must offer git setup and retry instead of a dead end")
 
+# Team tab: the Workflows section exists only when there are runs, Stop only on a running one, and
+# the cancel goes to the run endpoint. A step's report is a <details> inside the card's data-st, so
+# keepOpen keeps it open across refreshes.
+gaps = set()
+if 'id="team-wf" class="team-wf"' not in HTML or 'id="team-wf-runs"' not in HTML:
+    gaps.add("index.html needs #team-wf (hidden by default) with #team-wf-runs above the board")
+if '$("team-wf").hidden = !wf.length' not in fn("teamRender") \
+        or 'keepOpen($("team-wf-runs")' not in fn("teamRender"):
+    gaps.add("teamRender must hide #team-wf without runs and render the runs through keepOpen")
+if 'r.status === "running" ?' not in fn("wfCard") or "teamWfStop(" not in fn("wfCard") \
+        or 'data-st="${esc(r.id)}"' not in fn("wfCard") or "<details>" not in fn("wfCard"):
+    gaps.add("wfCard needs data-st, a details per step report and a Stop button only for a running run")
+if "confirm(" not in fn("teamWfStop") or "/api/workflows/runs/" not in fn("teamWfStop"):
+    gaps.add("teamWfStop must confirm and POST /api/workflows/runs/<id>/cancel")
+check("the Team tab shows workflow runs with a confirmed Stop", gaps,
+      "runs hidden when none, steps in order, a report opens, Stop only while running")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)
