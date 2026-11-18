@@ -421,6 +421,8 @@ def init_db():
     team.migrate(conn)
     import board
     board.migrate(conn)
+    import workflow
+    workflow.migrate(conn)
     import planner
     planner.migrate(conn)
     conn.commit()
