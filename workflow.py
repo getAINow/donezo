@@ -136,6 +136,21 @@ def get(director_id, name):
 ROLE = "role"           # team_role of a step's session
 WRITE_PLAYBOOK = "feature"
 
+_READ = ("Read", "Grep", "Glob", "Bash(git *)")
+BASICS = {
+    ROLE: _READ + ("mcp__signal__spawn_subagent", "mcp__signal__list_subagents",
+                   "mcp__signal__cancel_subagent", "mcp__signal__finish_step"),
+    "subagent": _READ + ("Edit", "Write"),
+    "verifier": _READ + ("mcp__signal__submit_verdict",),
+}
+
+
+def tool_list(kind, tools):
+    """A role's (kind 'role'), its sub-agent's or its verifier's allow list: the basics + the step's
+    tools, de-duplicated in order. Plain Bash = the full shell, so Bash(git *) is dropped."""
+    out = list(dict.fromkeys([*BASICS[kind], *(t.strip() for t in tools)]))
+    return [t for t in out if t != "Bash(git *)"] if "Bash" in out else out
+
 
 def _load_run(r):
     if not r:
@@ -283,7 +298,7 @@ async def _start_step(run_id):
         effort = team.default_effort(WRITE_PLAYBOOK)
         sess, err = await team._spawn_session(name, director.get("cwd") or "", "", effort, director,
                                               run["workspace_id"], "", team.builder_model("", effort),
-                                              skill=s["playbook"])
+                                              skill=s["playbook"], tools=tool_list(ROLE, s["tools"]))
         if err:
             return _end(get_run(run_id), "stopped", f"could not start step {run['step'] + 1} ({s['role']}): {err}")
         team._set_team(sess["id"], director["id"], ROLE)
