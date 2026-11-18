@@ -3,6 +3,8 @@
 Definitions (workflows) and runs (workflow_runs). A run snapshots the steps at start, then runs
 each role as a fresh team session (team_role 'role') in the director's folder. A role ends its
 step with finish_step; the run advances when that role's turn ends (after_run), never mid-turn.
+A role may delegate to sub-agents (team.spawn_subagent): its step then spans several turns and
+waits while its sub-agents work or a message to it is still queued.
 Like board.py, it never imports session_orchestrator at module level.
 """
 
@@ -151,6 +153,36 @@ def running_for(director_id):
                                (director_id,)))
 
 
+def role_run(session_id):
+    """The running run whose current step this session is, else None."""
+    return _load_run(team._row("SELECT * FROM workflow_runs WHERE session_id = ? AND status = 'running'",
+                               (session_id,))) if session_id else None
+
+
+LIVE = ("pending", "approved")
+
+
+def _waiting(run, live=LIVE):
+    """The current role still has a sub-agent at work or a message yet to run: its step is not over."""
+    sid = run["session_id"]
+    return bool(sid) and bool(team._active_count(sid) or team._row(
+        f"SELECT 1 FROM signals WHERE to_session = ? AND status IN ({','.join('?' * len(live))}) LIMIT 1",
+        (sid, *live)))
+
+
+def _close_visit(run):
+    """A step visit ends: the role's queued messages are denied, its active sub-agents cancelled and
+    its SKILL folder (in the director's folder) dropped."""
+    sid = run["session_id"]
+    if not sid:
+        return
+    team._exec("UPDATE signals SET status = 'denied', reason = 'workflow step ended' "
+               "WHERE to_session = ? AND status IN ('pending', 'approved')", (sid,))
+    team.on_session_removed(sid)
+    s = team._so().get_session(sid) or {}
+    team._drop_skill(s.get("cwd"), s.get("name"))
+
+
 def _update_run(run_id, _from=("running",), **fields):
     """Write only while the run is still in a _from status, so a cancel during a transition is
     never overwritten. None = not written."""
@@ -223,6 +255,10 @@ def _step_msg(run, sess_name):
             f' If an earlier step\'s work is not good enough to build on, call instead: result="reject", '
             f'back_to="<earlier role, empty = {steps[i - 1]["role"]}>", report="<findings: what is wrong '
             f'and what it needs>".')
+    parts.append(f"\nYou may delegate hands-on work: spawn_subagent(from_role=\"{sess_name}\", ...). Then end "
+                 f"your turn and wait for the [SUB-AGENT PASSED] or [SUB-AGENT FAILED] message. Review a "
+                 f"passed branch's diff and merge it yourself into the current branch of this folder; "
+                 f"never push. Call finish_step only when nothing you delegated is still active.")
     parts.append(f"\nWhen you finish, call exactly once:\nfinish_step(from_role=\"{sess_name}\", "
                  f"result=\"done\", report=\"<what you produced, where, and the evidence>\", "
                  f"workspace_id=\"{run['workspace_id']}\").{back}\nThen end your turn. Do not call send_signal.")
@@ -269,16 +305,14 @@ def _resume_hint(run, idx):
 
 
 def _end(run, status, reason="", resume=None):
-    """Close a still-running run; done/stopped tell the director exactly once. The current role's
-    SKILL folder sits in the director's folder, so it goes on every ending."""
+    """Close a still-running run and its current step visit; done/stopped tell the director exactly once."""
     if not run:
         return
     run = _update_run(run["id"], status=status, reason=reason[:2000])
     if run is None:
         return
+    _close_visit(run)
     so = team._so()
-    s = so.get_session(run["session_id"]) or {}
-    team._drop_skill(s.get("cwd"), s.get("name"))
     if status == "cancelled":
         return
     head = "[WORKFLOW DONE]" if status == "done" else "[WORKFLOW STOPPED]"
@@ -296,10 +330,12 @@ def _end(run, status, reason="", resume=None):
 
 def finish_step(session_id, result, report, back_to=""):
     """Record the current role's result. The run advances when that role's turn ends."""
-    run = _load_run(team._row("SELECT * FROM workflow_runs WHERE session_id = ? AND status = 'running'",
-                              (session_id,)))
+    run = role_run(session_id)
     if not run:
         return "⛔ only the role that is the current step of a running workflow can call finish_step."
+    if team._active_count(session_id):
+        return ("⛔ a sub-agent you delegated is still active — end your turn and wait for its "
+                "[SUB-AGENT PASSED]/[SUB-AGENT FAILED] message, or cancel_subagent it first.")
     result = str(result or "").strip().lower()
     if result not in ("done", "reject"):
         return "⛔ result must be done or reject."
@@ -320,12 +356,14 @@ def finish_step(session_id, result, report, back_to=""):
 
 
 async def after_run(signal, result):
-    """process_signal calls this after every run. Acts only on the current role of a running run."""
-    run = _load_run(team._row("SELECT * FROM workflow_runs WHERE signal_id = ? AND session_id = ? "
-                              "AND status = 'running'", (signal.get("id"), signal.get("to_session"))))
+    """process_signal calls this after every run. Acts only on a turn of the current role of a
+    running run; a turn that ends without a result while the role still waits leaves the step open."""
+    run = role_run(signal.get("to_session"))
     if not run:
         return
     try:
+        if result.get("status") in ("done", "ok") and not run["result"] and _waiting(run):
+            return
         await _advance(run, result)
     except Exception as e:  # noqa: BLE001 — a broken run must never kill the run loop
         print(f"[workflow] {run['id']} error: {e!r}", flush=True)
@@ -333,9 +371,7 @@ async def after_run(signal, result):
 
 
 async def _advance(run, result):
-    so = team._so()
-    sess = so.get_session(run["session_id"]) or {}
-    team._drop_skill(sess.get("cwd"), sess.get("name"))
+    _close_visit(run)
     i, steps, rec = run["step"], run["steps"], run["result"]
     role = steps[i]["role"]
     if result.get("status") not in ("done", "ok") or not rec:
@@ -371,19 +407,16 @@ async def _advance(run, result):
 
 
 def cancel_run(director_id):
-    """Cancel the director's running run: its task message denied, the role killed. No message."""
+    """Cancel the director's running run: the role killed, its messages denied, its sub-agents
+    cancelled. No message."""
     run = running_for(director_id)
     if not run:
         return {"error": "you have no running workflow."}
-    if run["signal_id"]:
-        team._exec("UPDATE signals SET status = 'denied', reason = 'workflow cancelled' "
-                   "WHERE id = ? AND status IN ('pending', 'approved')", (run["signal_id"],))
     if run["session_id"]:
         team._kill(run["session_id"])
     if _update_run(run["id"], status="cancelled", reason="cancelled by the director") is None:
         return {"error": "it ended in the meantime."}
-    s = team._so().get_session(run["session_id"]) or {}
-    team._drop_skill(s.get("cwd"), s.get("name"))
+    _close_visit(run)
     return {"id": run["id"]}
 
 
@@ -398,18 +431,23 @@ def on_session_removed(session_id):
 
 
 def on_signal_dropped(signal_id, why):
-    for r in team._rows("SELECT * FROM workflow_runs WHERE signal_id = ? AND status = 'running'", (signal_id,)):
-        run = _load_run(r)
-        _end(run, "stopped", f"the task message of step {run['step'] + 1} "
-                             f"({run['steps'][run['step']]['role']}) was {why} before it ran")
+    """A message to the current role was denied: stop the run if the role has nothing left to wait for
+    (a turn in progress counts: its end decides)."""
+    sig = team._row("SELECT to_session FROM signals WHERE id = ?", (signal_id,))
+    run = role_run(sig["to_session"]) if sig else None
+    if not run or _waiting(run, LIVE + ("processing",)):
+        return
+    what = "the task message of" if signal_id == run["signal_id"] else "a message to"
+    _end(run, "stopped", f"{what} step {run['step'] + 1} ({run['steps'][run['step']]['role']}) was {why} "
+                         f"before it ran, and the step had nothing else to wait for")
 
 
 def reconcile():
-    """Server start: a running run whose task message is no longer live has nobody to push it on."""
+    """Server start, after team.reconcile: a running run whose role has no live message and no active
+    sub-agent has nobody to push it on."""
     for r in team._rows("SELECT * FROM workflow_runs WHERE status = 'running'"):
-        sig = team._row("SELECT status FROM signals WHERE id = ?", (r["signal_id"],)) if r["signal_id"] else None
-        if not (sig and sig["status"] in ("pending", "approved")):
-            run = _load_run(r)
+        run = _load_run(r)
+        if not _waiting(run):
             _end(run, "stopped", f"the orchestrator restarted during step {run['step'] + 1} "
                                  f"({run['steps'][run['step']]['role']})")
 

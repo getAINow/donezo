@@ -710,9 +710,15 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     director = so.get_session(director_id)
     if not director:
         return {"error": "director session not found"}
+    import workflow                     # noqa: PLC0415 — workflow imports team
     if is_team_session(director):
-        return {"error": "a sub-agent cannot spawn sub-agents — report back and let your director "
-                         "split the work"}
+        # The one team session that delegates: the current role of a running workflow run.
+        if not workflow.role_run(director_id):
+            return {"error": "a sub-agent cannot spawn sub-agents — report back and let your director "
+                             "split the work"}
+    elif run := workflow.running_for(director_id):
+        return {"error": f"your workflow run {run['id']} is running: its roles delegate and merge in your "
+                         f"folder — wait for it to end or cancel_workflow first"}
     playbook = (playbook or "").strip().lower()
     if playbook not in PLAYBOOKS:
         return {"error": f"playbook must be one of: {', '.join(PLAYBOOKS)}"}

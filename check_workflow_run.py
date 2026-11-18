@@ -7,7 +7,9 @@ What can go wrong quietly:
   - the director told nothing, or told twice, or told after a cancel;
   - redefining a workflow changing a run already in flight;
   - a role's SKILL folder showing in the user's git status or left behind;
-  - a run hanging 'running' after a restart, a removed director or a denied task message.
+  - a run hanging 'running' after a restart, a removed director or a denied task message;
+  - a role that delegates: its step ending while a sub-agent still works, or its sub-agents
+    outliving the step; a director delegating into the folder its roles are merging in.
 
     python3 check_workflow_run.py
 """
@@ -83,7 +85,9 @@ so.register_session("peer-1", "peer", cwd=str(REPO), model="", workspace_id=WS)
 # PLAN[role] = one entry per run of that role: "crash", or a list of finish_step calls
 # (result, back_to, report) — an empty list ends the turn without finish_step.
 # A callable entry runs first (inside the turn) and its return value is the calls list.
-PLAN, ROLE_RUNS, DURING, RESPONSES = {}, [], {}, []
+# A sub-agent commits feature.py in its worktree; its verifier passes it. WAIT[subtask] = what the
+# run looked like while that sub-agent worked (its role's turn had already ended).
+PLAN, ROLE_RUNS, DURING, RESPONSES, ROLE_OF, WAIT = {}, [], {}, [], {}, {}
 
 
 def _role_in(prompt):
@@ -91,14 +95,47 @@ def _role_in(prompt):
     return prompt[i:].split("]")[0].split(" · ")[-1] if i >= 0 else ""
 
 
+def _key_in(prompt):
+    i = prompt.find('key="')
+    return prompt[i + 5:prompt.index('"', i + 5)] if i >= 0 else ""
+
+
+def _st_in(prompt, tag):
+    return prompt.split(f"[{tag} ")[1].split()[0].rstrip("]")
+
+
+def _ok(session, text):
+    return {"ok": True, "result": text, "session_id": session["id"], "tokens": 1, "raw": {}}
+
+
 async def fake_run(session, prompt, on_event=None, dry_run=False):
-    role = _role_in(prompt)
-    if not role:
-        return {"ok": True, "result": "noted", "session_id": session["id"], "tokens": 1, "raw": {}}
     name, cwd = session["name"], Path(session.get("cwd") or ".")
+    if "[SUB-AGENT TASK " in prompt or "[VERIFY " in prompt:
+        if TMP.resolve() not in cwd.resolve().parents:
+            return {"ok": False, "result": f"refusing to write outside {TMP}: {cwd}", "session_id": session["id"],
+                    "tokens": 0, "raw": {}}
+        if "[VERIFY " in prompt:
+            team.submit_verdict(name, _st_in(prompt, "VERIFY"), "PASS", "ran it: ok", key=_key_in(prompt))
+            return _ok(session, "verified")
+        st = team.get_subtask(_st_in(prompt, "SUB-AGENT TASK"))
+        wf, role = workflow.role_run(st["director_id"]), so.get_session(st["director_id"]) or {}
+        WAIT[st["id"]] = {"run": wf, "skill": (Path(role.get("cwd", "")) / ".claude" / "skills" / role.get("name", "x")
+                                              / "SKILL.md").exists(),
+                          "status": git("status", "--porcelain", "--untracked-files=all", cwd=role.get("cwd", ".")),
+                          "cwd": str(cwd), "common": git("rev-parse", "--path-format=absolute", "--git-common-dir",
+                                                         cwd=cwd)}
+        (cwd / "feature.py").write_text(f"VALUE = '{st['id']}'\n", encoding="utf-8")
+        git("add", "feature.py", cwd=cwd)
+        git("commit", "-q", "-m", "feature", cwd=cwd)
+        return _ok(session, "Added feature.py. Evidence: ran it.")
+    role = _role_in(prompt) or ROLE_OF.get(name, "")
+    if not role:
+        return _ok(session, "noted")
+    ROLE_OF[name] = role
     ROLE_RUNS.append((role, name, prompt))
-    DURING[name] = ((cwd / ".claude" / "skills" / name / "SKILL.md").exists(),
-                    git("status", "--porcelain", "--untracked-files=all", cwd=cwd))
+    DURING.setdefault(name, []).append((
+        (cwd / ".claude" / "skills" / name / "SKILL.md").exists(),
+        git("status", "--porcelain", "--untracked-files=all", cwd=cwd)))
     plan = PLAN.get(role, [[("done", "", f"{role} report")]])
     act = plan.pop(0) if len(plan) > 1 else plan[0]
     if callable(act):
@@ -108,13 +145,9 @@ async def fake_run(session, prompt, on_event=None, dry_run=False):
     for result, back_to, report in act:
         r = await signal_mcp.finish_step(from_role=name, result=result, report=report, back_to=back_to,
                                          workspace_id=WS)
-        run = workflow.get_run(_run_id(prompt))
+        run = latest(session["parent_id"])
         RESPONSES.append((role, result, back_to, r, run["status"], run["step"], run["session_id"] == session["id"]))
     return {"ok": True, "result": f"{role} finished", "session_id": session["id"], "tokens": 5, "raw": {}}
-
-
-def _run_id(prompt):
-    return prompt.split("[WORKFLOW STEP ")[1].split()[0]
 
 
 for eng in so.ENGINES.values():
@@ -212,13 +245,13 @@ async def main():
           "running" not in await signal_mcp.list_workflows(from_role="lead", workspace_id=WS))
     names = [n for role, n, _ in ROLE_RUNS if role.startswith("a")]
     check("a) during a step the SKILL exists but git status is clean",
-          all(DURING[n] == (True, "") for n in names), {n: DURING[n] for n in names})
+          all(d == (True, "") for n in names for d in DURING[n]), {n: DURING[n] for n in names})
     left = [p.name for p in (REPO / ".claude" / "skills").glob("sub-*")] if (REPO / ".claude" / "skills").exists() else []
     check("a) the role SKILL folders are gone after their steps", left == [], left)
     check("a) a recorded done does not advance the run mid-turn",
           all(st == "running" and same for role, *_, st, _s, same in RESPONSES if role.startswith("a")),
           RESPONSES)
-    check("a) a role session cannot spawn sub-agents",
+    check("a) a role session of an ended run cannot spawn sub-agents",
           "error" in team.spawn_subagent(sess[0]["id"], "feature", "b", "d"))
 
     # ── b) reject → back to step 1 → second rejection stops ─────────────────
@@ -349,6 +382,181 @@ async def main():
     await drain()
     check("g) the run keeps its snapshot", [x[0] for x in runs_of("g")] == ["g1", "g2"]
           and not runs_of("h") and latest()["status"] == "done", [x[0] for x in runs_of("g")])
+
+    # ── i) a role delegates: the step waits for its sub-agents ───────────────
+    await define("deleg", ["d1", "d2"])
+    got = {}
+
+    async def d1_first(session):
+        got["spawn"] = await signal_mcp.spawn_subagent(from_role=session["name"], playbook="feature",
+                                                       brief="add feature.py", done_when="feature.py exists",
+                                                       workspace_id=WS)
+        got["a"] = got["spawn"].split()[1]
+        b = await signal_mcp.spawn_subagent(from_role=session["name"], playbook="feature", brief="spare",
+                                            done_when="x", workspace_id=WS)
+        got["cancel_b"] = await signal_mcp.cancel_subagent(from_role=session["name"], subtask_id=b.split()[1],
+                                                           workspace_id=WS)
+        got["list"] = await signal_mcp.list_subagents(from_role=session["name"], workspace_id=WS)
+        got["finish"] = await signal_mcp.finish_step(from_role=session["name"], result="done", report="early",
+                                                     workspace_id=WS)
+        got["director"] = await signal_mcp.spawn_subagent(from_role="lead", playbook="feature", brief="x",
+                                                          done_when="y", workspace_id=WS)
+        return []
+
+    async def d1_second(session):
+        git("merge", "--no-ff", "-q", "-m", "merge", team.get_subtask(got["a"])["branch"], cwd=session["cwd"])
+        return [("done", "", "d1 merged the sub-agent's feature.py")]
+
+    async def d2_turn(session):
+        got["earlier"] = team.spawn_subagent(got["d1"]["id"], "feature", "x", "y")
+        return [("done", "", "d2 report")]
+    PLAN["d1"], PLAN["d2"] = [d1_first, d1_second], [d2_turn]
+    await run("deleg", "delegate job")
+    await drain(signals=False)
+    got["d1"] = so.get_session(latest()["session_id"])
+    await drain()
+    wf, a = latest(), team.get_subtask(got["a"])
+    d1 = got["d1"]
+    check("i) a role's spawn_subagent returns a subtask id", got["spawn"].startswith("Sub-agent st_"), got["spawn"])
+    check("i) the role is the sub-agent's director", a["director_id"] == d1["id"], a["director_id"])
+    w = WAIT.get(got["a"], {})
+    check("i) it worked in a git worktree of the director's repo",
+          a["repo"] == str(REPO) and w.get("cwd") == a["worktree"] != str(REPO)
+          and Path(w.get("common", "")) == (REPO / ".git").resolve(), (a["repo"], w.get("cwd"), w.get("common")))
+    check("i) list_subagents and cancel_subagent work for the role",
+          got["a"] in got["list"] and got["cancel_b"].startswith("Cancelled"), (got["list"], got["cancel_b"]))
+    check("i) finish_step is refused while a sub-agent is active",
+          got["finish"].startswith("⛔") and "still active" in got["finish"], got["finish"])
+    check("i) the director's spawn_subagent is refused while its run is running",
+          got["director"].startswith("⛔") and "workflow run" in got["director"], got["director"])
+    check("i) while the sub-agent works the run waits: step 1, same role session, no failure counted",
+          (w.get("run") or {}).get("status") == "running" and w["run"]["step"] == 0
+          and w["run"]["session_id"] == d1["id"] and w["run"]["retried"] == 0 and w["run"]["spawned"] == 1,
+          {k: (w.get("run") or {}).get(k) for k in ("status", "step", "session_id", "retried", "spawned")})
+    d1_runs = [(n, p) for role, n, p in ROLE_RUNS if role == "d1"]
+    check("i) the passed sub-agent's message starts a second turn of the same role session",
+          len(d1_runs) == 2 and {n for n, _ in d1_runs} == {d1["name"]}
+          and f"[SUB-AGENT PASSED] {got['a']}" in d1_runs[1][1], [n for n, _ in d1_runs])
+    check("i) finish_step in that turn advances the run to step 2 when the turn ends",
+          [x[0] for x in runs_of("d")] == ["d1", "d1", "d2"] and wf["status"] == "done"
+          and "d1 merged" in wf["reports"]["d1"], ([x[0] for x in runs_of("d")], wf["status"]))
+    check("i) the role merged the passed work into the director's folder", (REPO / "feature.py").exists())
+    check("i) the role's SKILL stays for both turns and the wait, git status stays clean",
+          DURING[d1["name"]] == [(True, "")] * 2 and w.get("skill") is True and w.get("status") == "",
+          (DURING[d1["name"]], w.get("skill"), w.get("status")))
+    check("i) …and the SKILL is gone after the step", not skill_dirs(d1), skill_dirs(d1))
+    check("i) the role of an earlier step of the running run cannot spawn", "cannot spawn" in
+          got["earlier"].get("error", ""), got["earlier"])
+    for who, sid in (("a role of an ended run", d1["id"]), ("a sub-agent", a["session_id"]),
+                     ("a verifier", a["verifier_id"])):
+        r = team.spawn_subagent(sid, "feature", "x", "y")
+        check(f"i) {who} cannot spawn sub-agents", "cannot spawn" in r.get("error", ""), r)
+    r = await signal_mcp.spawn_subagent(from_role="lead", playbook="feature", brief="x", done_when="y",
+                                        workspace_id=WS)
+    check("i) the director's spawn_subagent works again after the run", r.startswith("Sub-agent st_"), r)
+    team.cancel(r.split()[1])
+
+    # cancel / stop / director removal cancel the role's active sub-agents
+    async def hold(session):
+        r = await signal_mcp.spawn_subagent(from_role=session["name"], playbook="feature", brief="hold",
+                                            done_when="x", workspace_id=WS)
+        HELD.append(r.split()[1])
+        return []
+
+    async def hold_crash(session):
+        await hold(session)
+        return "crash"
+    HELD = []
+
+    async def first_turn(name, who="lead", did="dir-1"):
+        """Run only the first role's first turn; the sub-agent it spawned gets its session and brief."""
+        await run(name, f"{name} job", who=who)
+        await drain(signals=False)
+        await so.process_signal(team._row("SELECT * FROM signals WHERE id = ?", (latest(did)["signal_id"],)))
+        await drain(signals=False)
+        return latest(did), team.get_subtask(HELD[-1])
+
+    await define("hold", ["k1", "k2"])
+    PLAN["k1"] = [hold]
+    wf, st = await first_turn("hold")
+    role = so.get_session(wf["session_id"])
+    check("i) a waiting step: run running, the sub-agent running", wf["status"] == "running" and st["status"] == "running",
+          (wf["status"], st["status"]))
+    await signal_mcp.cancel_workflow(from_role="lead", workspace_id=WS)
+    st = team.get_subtask(st["id"])
+    brief = team._row("SELECT status FROM signals WHERE id = ?", (st["signal_id"],))
+    check("i) cancel_workflow cancels the role's active sub-agent and denies its brief",
+          latest()["status"] == "cancelled" and st["status"] == "cancelled" and brief["status"] == "denied",
+          (latest()["status"], st["status"], brief["status"]))
+    check("i) …and the role's SKILL is gone", not skill_dirs(role), skill_dirs(role))
+    await drain()
+
+    PLAN["k1"] = [hold_crash]
+    n = len(HELD)
+    await run("hold", "crash job")
+    await drain()
+    wf = latest()
+    sts = [team.get_subtask(x)["status"] for x in HELD[n:]]
+    check("i) a failed role turn is its own failure even with a sub-agent: retried once, then stopped",
+          wf["status"] == "stopped" and "failed twice" in wf["reason"], (wf["status"], wf["reason"]))
+    check("i) the retry and the stop cancel the role's active sub-agents", sts == ["cancelled"] * 2, sts)
+
+    REPO3 = TMP / "repo3"
+    REPO3.mkdir()
+    git("init", "-q", "-b", "main", cwd=REPO3)
+    git("-c", "user.email=d@example.com", "-c", "user.name=D", "commit", "-q", "--allow-empty", "-m", "i", cwd=REPO3)
+    so.register_session("dir-3", "lead3", cwd=str(REPO3), model="", workspace_id=WS)
+    await define("hold", ["k1", "k2"], who="lead3")
+    PLAN["k1"] = [hold]
+    wf, st = await first_turn("hold", who="lead3", did="dir-3")
+    r = await api.post("/api/sessions/dir-3/unregister")
+    check("i) removing the director cancels its run and the role's active sub-agent",
+          r.status_code == 200 and latest("dir-3")["status"] == "cancelled"
+          and team.get_subtask(st["id"])["status"] == "cancelled",
+          (r.status_code, latest("dir-3")["status"], team.get_subtask(st["id"])["status"]))
+    await drain()
+
+    # a denied message to the waiting role; a restart while it waits
+    await define("note", ["n1", "n2"])
+    notes = []
+
+    async def note_turn(session):
+        notes.extend(team._enqueue(session["id"], f"note {k}", WS) for k in (1, 2))
+        return []
+    PLAN["n1"] = [note_turn]
+    await run("note", "note job")
+    await drain(signals=False)
+    await so.process_signal(team._row("SELECT * FROM signals WHERE id = ?", (latest()["signal_id"],)))
+    role = so.get_session(latest()["session_id"])
+    check("i) a turn that ends with a message still queued for the role waits",
+          latest()["status"] == "running" and latest()["retried"] == 0, latest()["status"])
+    n_msgs = len(wf_msgs())
+    await api.post(f"/api/signals/{notes[0]}/deny")
+    check("i) denying one of two queued messages keeps the run", latest()["status"] == "running")
+    await api.post(f"/api/signals/{notes[1]}/deny")
+    wf = latest()
+    check("i) denying the last one stops the run (nothing left to wait for)",
+          wf["status"] == "stopped" and "denied" in wf["reason"] and len(wf_msgs()[n_msgs:]) == 1, wf["reason"])
+    check("i) …and the role's SKILL is gone", not skill_dirs(role), skill_dirs(role))
+
+    PLAN["k1"] = [hold]
+    wf, st = await first_turn("hold")
+    team.reconcile()
+    workflow.reconcile()
+    check("i) restart keeps a run whose role has an active sub-agent",
+          latest()["status"] == "running" and team.get_subtask(st["id"])["status"] == "running")
+    so.set_signal_status(st["signal_id"], "processing")          # the sub-agent's turn died with the process
+    team.reconcile()
+    workflow.reconcile()
+    msg = team._row("SELECT id, status, message FROM signals WHERE to_session = ? ORDER BY id DESC LIMIT 1",
+                    (wf["session_id"],))
+    check("i) restart keeps a run whose role has a pending message (the sub-agent's failure)",
+          latest()["status"] == "running" and msg["status"] == "pending" and "[SUB-AGENT FAILED]" in msg["message"],
+          (latest()["status"], msg["status"]))
+    so.set_signal_status(msg["id"], "processing")
+    workflow.reconcile()
+    check("i) restart stops a run whose role has neither", latest()["status"] == "stopped", latest()["status"])
+    await drain()
 
     # ── h) director / role removed, task message denied, restart ────────────
     REPO2 = TMP / "repo2"
