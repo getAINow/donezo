@@ -4438,6 +4438,10 @@ function teamRender() {
     }).join("");
   });
 
+  const wf = TEAM.workflows || [];
+  $("team-wf").hidden = !wf.length;
+  keepOpen($("team-wf-runs"), () => { $("team-wf-runs").innerHTML = wf.map(wfCard).join(""); });
+
   keepOpen($("team-decisions"), () => {
     $("team-decisions").innerHTML = TEAM.decisions.map((d) => `<li data-st="d${d.id}">
         <div class="when" title="${esc(d.ts)}">${esc(shortDateTime(d.ts).slice(5, 16))} · ${esc(d.session_name || "?")}${d.subtask_id ? ` · ${esc(d.subtask_id)}` : ""}</div>
@@ -4546,6 +4550,35 @@ function stCard(s, i, sc = "t") {
       ${s.report ? `<pre>Builder's report:\n${esc(s.report)}</pre>` : ""}
     </div></details></div></article>`;
 }
+
+// A workflow run: name, job, status, director, its steps in order (the current one highlighted; a step
+// with a report opens to show it) and, while it runs, a Stop button.
+const WF_BADGE = { running: "b-blue", done: "b-green", stopped: "b-red", cancelled: "b-gray" };
+function wfCard(r, i) {
+  const steps = r.steps.map((p, k) => {
+    const head = `<span class="wf-head"><b>${esc(p.role)}</b><span class="hint">${esc(p.job)}</span></span>`;
+    return `<li class="wf-step s-${esc(p.state)}"${p.state === "current" ? ` aria-current="step"` : ""}>${
+      p.report ? `<details><summary>${head}</summary><pre>${esc(p.report)}</pre></details>` : `<div>${head}</div>`}</li>`;
+  }).join("");
+  const since = r.status === "running" ? r.created_at : r.ended_at || r.created_at;
+  return `<article class="st-card wf-${esc(r.status)}" data-st="${esc(r.id)}">
+    <div class="st-top">${badge(esc(r.status), WF_BADGE[r.status])}<span class="st-chip">${esc(r.name)}</span>
+      ${r.director_name ? `<span class="st-who" title="Director">${esc(r.director_name)}</span>` : ""}</div>
+    <div class="st-title">${esc(r.job)}</div>
+    ${r.reason ? `<div class="st-box ${r.status === "stopped" ? "bad" : ""}"><div>${r.status === "stopped" ? "Stopped" : "Reason"}</div><p>${esc(r.reason)}</p></div>` : ""}
+    <ol class="wf-steps">${steps}</ol>
+    <div class="st-meta"><span class="st-age" data-since="${esc(since)}"${r.status === "running" ? "" : ` data-ago="1"`}>${
+      since ? fmtAge(secsSince(since)) + (r.status === "running" ? "" : " ago") : ""}</span></div>
+    ${r.status === "running" ? `<div class="st-acts"><button class="danger" onclick="teamWfStop(${i})">Stop</button></div>` : ""}
+  </article>`;
+}
+
+function teamWfStop(i) {
+  const r = (TEAM.workflows || [])[i];
+  if (r && confirm(`Stop workflow "${r.name}"? The running role is killed; the director is told.`))
+    teamDo(`/api/workflows/runs/${encodeURIComponent(r.id)}/cancel`);
+}
+window.teamWfStop = teamWfStop;
 
 function diffHtml(text) {
   return String(text || "").split("\n").map((l) => {

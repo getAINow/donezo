@@ -728,6 +728,29 @@
   .st-card details .hint { margin: 6px 0 0; font-size: 11px; }
   /* Đường dẫn worktree / lệnh dài không có chỗ ngắt: không bẻ thì cả card phình ra đè cột bên. */
   .st-card details .hint, .st-card details pre { overflow-wrap: anywhere; }
+  /* Workflow runs: one st-card per run, its steps a vertical list so a narrow screen never scrolls sideways. */
+  .team-wf { display: grid; gap: 10px; margin: 0 0 16px; }
+  .team-wf[hidden] { display: none; }
+  .team-wf h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .wf-runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+  .st-card.wf-running { border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
+  .st-card.wf-done { border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+  .st-card.wf-stopped { border-color: color-mix(in srgb, var(--red) 50%, var(--border)); }
+  .st-card.wf-cancelled { opacity: .8; }
+  .wf-steps { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+  .wf-step { border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 5px 8px; min-width: 0;
+    overflow-wrap: anywhere; }
+  .wf-step summary { cursor: pointer; }
+  .wf-head { display: inline-block; vertical-align: top; max-width: calc(100% - 1.6em); }
+  .wf-step b { display: block; font-weight: 600; }
+  .wf-step .hint { margin: 2px 0 0; font-size: 11px; }
+  .wf-step.s-done b::before { content: "\2713 "; color: var(--green); }
+  .wf-step.s-current { background: var(--blue-soft); border-color: var(--blue); }
+  .wf-step.s-current b { color: var(--blue); }
+  .wf-step.s-stopped { background: var(--red-soft); border-color: var(--red); }
+  .wf-step.s-pending { color: var(--muted); }
+  .wf-step pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11px; line-height: 1.5; max-height: 220px;
+    overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 7px 9px; }
   .team-side { display: grid; gap: 16px; min-width: 0; }
   .team-sub { padding: 8px 15px 0; margin: 0; }
   .tl { list-style: none; margin: 10px 15px 15px; padding: 0 0 0 14px; border-left: 2px solid var(--border);
@@ -1540,6 +1563,10 @@
         </div>
         <div class="team-main">
           <section aria-label="Sub-agent pipeline" class="team-pipe">
+            <section id="team-wf" class="team-wf" aria-label="Workflows" hidden>
+              <h3>Workflows</h3>
+              <div id="team-wf-runs" class="wf-runs"></div>
+            </section>
             <p class="team-lead">Each sub-agent works in its own git worktree. Nothing counts as done
               until a fresh verifier observes its <b>Done means</b>; the director is messaged when it
               passes or fails.</p>

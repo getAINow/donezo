@@ -1545,6 +1545,15 @@ def _last_event(session_ids):
     return r
 
 
+def _giver_name(sess):
+    """Who a card reports to. A workflow role's session is named sub-<run>-<n>-<role>: show the role."""
+    name = (sess or {}).get("name", "")
+    if (sess or {}).get("team_role") == "role":
+        m = re.match(r"^sub-[0-9a-f]+-\d+-(.+)$", name)
+        return m.group(1) if m else name
+    return name
+
+
 def _items(subs, sessions):
     """Subtask dạng màn hình dùng: kèm tên phiên, tổng run/token, bước mới nhất nếu còn chạy."""
     verifiers = {}
@@ -1563,7 +1572,7 @@ def _items(subs, sessions):
                                   "updated_at", "ended_at")},
             "verdict": v, "session_name": (sessions.get(st["session_id"]) or {}).get("name", ""),
             "verifier_name": (sessions.get(st["verifier_id"]) or {}).get("name", ""),
-            "director_name": (sessions.get(st["director_id"]) or {}).get("name", ""),
+            "director_name": _giver_name(sessions.get(st["director_id"])),
             "max_attempts": _cap(st), **_run_totals(sess_ids),
             "last": _last_event(sess_ids) if st["status"] in ACTIVE else None,
             "isolated": bool(st["worktree"]), "effort_line": effort_line(st),
@@ -1615,6 +1624,7 @@ def _subtask_page(workspace_id, sessions, page):
 def overview(workspace_id, page=None):
     """page=None: đúng như cũ (200 subtask, 60 quyết định) — Home và panel director dùng đường này.
     page = parse_page(...): tab Team, nạp từng trang (sub_/dec_ limit+offset, filter, director_id)."""
+    import workflow                     # noqa: PLC0415 — workflow imports team
     so = _so()
     sessions = {s["id"]: s for s in so.list_sessions() if s.get("workspace_id") == workspace_id}
     if page:
@@ -1655,6 +1665,7 @@ def overview(workspace_id, page=None):
         # Mốc giờ CỦA SERVER: mọi timestamp là giờ local không múi của server, trình duyệt ở múi
         # khác thì tự tính tuổi sẽ lệch đúng số giờ chênh — dashboard đo lệch theo mốc này.
         "now": so._now(),
+        "workflows": workflow.overview(workspace_id, sessions),
     }
 
 
@@ -1750,6 +1761,10 @@ def routes():
     async def api_cancel(request: Request):
         return reply(cancel(request.path_params["st"], by_user=True))
 
+    async def api_wf_cancel(request: Request):
+        import workflow                             # noqa: PLC0415
+        return reply(workflow.cancel_by_user(request.path_params["run"]))
+
     async def api_reverify(request: Request):
         return reply(await reverify(request.path_params["st"]))
 
@@ -1798,6 +1813,7 @@ def routes():
         Route("/api/team/subtasks/{st}/reverify", api_reverify, methods=["POST"]),
         Route("/api/team/subtasks/{st}/discard", api_discard, methods=["POST"]),
         Route("/api/team/subtasks/{st}/diff", api_diff),
+        Route("/api/workflows/runs/{run}/cancel", api_wf_cancel, methods=["POST"]),
         Route("/api/team/edges", api_edges, methods=["POST"]),
         Route("/api/team/reflect", api_reflect, methods=["POST"]),
         Route("/api/team/proposals/{pid:int}", api_decide, methods=["POST"]),

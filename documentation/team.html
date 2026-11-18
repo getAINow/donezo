@@ -140,6 +140,35 @@ Scrolling loads more, 10 at a time.</p>
 <p>The director's own panel on the canvas shows the same cards for its team. Its button
 <span class="ui">Whole team &amp; settings</span> leads here.</p>
 
+<h2 id="workflows">Workflows</h2>
+<p>A workflow is an ordered list of roles. Each role has one job, its own instructions and a list of tools it may use.
+Use one when the same sequence of jobs comes back again and again, or when the one who makes the work should not be
+the one who approves it. Your director creates a workflow when you ask for one. You do not write it yourself.</p>
+<ul>
+  <li><strong>A run.</strong> The director starts a run with a job. The roles run one after the other, in the director's folder.
+    Each role is a fresh session that gets the job and the reports of the roles before it. It may delegate hands-on work to
+    its own sub-agents, then ends its step with a report. The director is messaged once, when the run is done or stopped.</li>
+  <li><strong>One at a time.</strong> A director has one run at a time. While it runs, the director waits: it does not
+    edit or merge in the folder and cannot delegate to sub-agents of its own.</li>
+  <li><strong>Sent back.</strong> A role that reviews the work can send it back to an earlier role with its findings.
+    That role runs again with them. If the same step is sent back twice, the run stops.</li>
+  <li><strong>When a role fails.</strong> A role that ends without a report gets one more try. After a second failure
+    the run stops, and the director is told which step and why.</li>
+  <li><strong>Resume.</strong> A stopped run is not lost. The director fixes the cause, for example a role's
+    instructions, and starts again at the step that stopped. The reports of the earlier steps carry over.
+    If the cause is unclear, it asks you first.</li>
+  <li><strong>Tool limit.</strong> A role can use only the tools listed for its step, plus reading files, git and
+    delegating. Anything else, such as editing files or running shell commands, has to be listed for it.</li>
+</ul>
+<p>When there is at least one run, the Team tab shows a <span class="ui">Workflows</span> section above the sub-agent
+board: every running run and the five that ended last. Each run shows its name, its job, its status and its director.
+The steps are listed in order, and the current one is highlighted. A step that has a report opens to show it. A stopped
+run shows why it stopped. A sub-agent card that a role delegated shows the role's name where other cards show the director.</p>
+<p><span class="ui">Stop</span> on a running run asks for confirmation, then kills the running role and ends the run.
+The director is told once, and does not need to answer.</p>
+<p>One limit to know: roles run in order because work a tool does outside the project folder, such as a message sent or
+a file written elsewhere, cannot be undone. Stopping a run does not undo them.</p>
+
 <h2 id="board">The Board tab</h2>
 <p>Every agent you made (not its sub-agents) has a board: the backlog of work it holds. Pick the agent at the top;
 it opens on the one with the most proposals waiting, otherwise the most open cards. Cards sit in four columns: <span class="ui">To do</span>,
