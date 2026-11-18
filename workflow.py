@@ -269,13 +269,18 @@ def _resume_hint(run, idx):
 
 
 def _end(run, status, reason="", resume=None):
-    """Close a still-running run; done/stopped tell the director exactly once."""
+    """Close a still-running run; done/stopped tell the director exactly once. The current role's
+    SKILL folder sits in the director's folder, so it goes on every ending."""
     if not run:
         return
     run = _update_run(run["id"], status=status, reason=reason[:2000])
-    if run is None or status == "cancelled":
+    if run is None:
         return
     so = team._so()
+    s = so.get_session(run["session_id"]) or {}
+    team._drop_skill(s.get("cwd"), s.get("name"))
+    if status == "cancelled":
+        return
     head = "[WORKFLOW DONE]" if status == "done" else "[WORKFLOW STOPPED]"
     lines = [f"{head} {run['id']} · {run['name']}", f"Job: {run['job']}"]
     if status == "stopped":
@@ -339,8 +344,10 @@ async def _advance(run, result):
                else "it ended its turn without calling finish_step")
         if run["retried"]:
             return _end(run, "stopped", f"step {i + 1} ({role}) failed twice — {why}")
-        if _update_run(run["id"], retried=1, note=f"Your previous attempt at this step failed: {why}. "
-                                                  f"Do the step again and end with finish_step.") is None:
+        # keep the findings of a rejection that sent the work here: the retry still needs them
+        note = (run["note"] + "\n\n" if run["note"] else "") + (
+            f"Your previous attempt at this step failed: {why}. Do the step again and end with finish_step.")
+        if _update_run(run["id"], retried=1, note=note) is None:
             return
         return await _start_step(run["id"])
     if rec["result"] == "done":

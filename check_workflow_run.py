@@ -39,6 +39,7 @@ os.environ.update({
 })
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import httpx                        # noqa: E402
 import session_orchestrator as so   # noqa: E402
 import signal_mcp                   # noqa: E402
 import team                         # noqa: E402
@@ -161,6 +162,12 @@ def latest(did="dir-1"):
                                         "ORDER BY created_at DESC, rowid DESC LIMIT 1", (did,)))
 
 
+def skill_dirs(sess):
+    """The role's SKILL folders that exist, in every CLI root."""
+    return [d for root in so.CLI_SKILL_ROOTS
+            if (d := Path(sess["cwd"]) / root / "skills" / sess["name"]).exists()]
+
+
 def runs_of(prefix):
     return [(role, prompt) for role, _, prompt in ROLE_RUNS if role.startswith(prefix)]
 
@@ -231,6 +238,16 @@ async def main():
     check("b) exactly one [WORKFLOW STOPPED] with the findings and the step to resume from",
           len(msgs) == 1 and msgs[0].startswith("[WORKFLOW STOPPED]") and "FIND-2" in msgs[0]
           and "from_step=1" in msgs[0] and "Do not reply to this." in msgs[0], msgs)
+
+    await define("rej2", ["q1", "q2"])
+    PLAN["q2"] = [[("reject", "", "FIND-Q: q1 is missing a part")], [("done", "", "q2 report")]]
+    PLAN["q1"] = [[("done", "", "q1 report")], [], [("done", "", "q1 fixed")]]
+    await run("rej2", "rej2 job")
+    await drain()
+    q1 = runs_of("q1")
+    check("b) a sent-back step that then fails on its own keeps the findings in its retry",
+          len(q1) == 3 and "FIND-Q" in q1[2][1] and "without calling finish_step" in q1[2][1]
+          and latest()["status"] == "done", (len(q1), q1[-1][1] if q1 else ""))
 
     # ── c) resume from step 2 of the stopped run ────────────────────────────
     PLAN["r3"] = [[("done", "", "r3 report")]]
@@ -343,36 +360,47 @@ async def main():
     await run("slow", "job", who="lead2")
     await drain(signals=False)
     wf = latest("dir-2")
-    team.on_session_removed("dir-2")
-    workflow.on_session_removed("dir-2")
-    so.unregister_session("dir-2")
+    role_sess = so.get_session(wf["session_id"])
+    had = bool(skill_dirs(role_sess))
+    r = await api.post("/api/sessions/dir-2/unregister")
     sig = team._row("SELECT status FROM signals WHERE id = ?", (wf["signal_id"],))
-    check("h) removing the director cancels its run",
-          latest("dir-2")["status"] == "cancelled" and sig["status"] == "denied")
+    check("h) removing the director (POST unregister) cancels its run",
+          r.status_code == 200 and latest("dir-2")["status"] == "cancelled" and sig["status"] == "denied",
+          (r.status_code, latest("dir-2")["status"], sig["status"]))
+    check("h) …and its role's SKILL folder is gone", had and not skill_dirs(role_sess), (had, skill_dirs(role_sess)))
 
     n_msgs = len(wf_msgs())
     await run("slow", "job")
     await drain(signals=False)
     wf = latest()
-    workflow.on_session_removed(wf["session_id"])
+    role_sess = so.get_session(wf["session_id"])
+    had = bool(skill_dirs(role_sess))
+    r = await api.post(f"/api/sessions/{role_sess['id']}/unregister")
     wf = latest()
     msgs = wf_msgs()[n_msgs:]
-    check("h) removing the role's session stops the run and tells the director once",
-          wf["status"] == "stopped" and "removed" in wf["reason"] and len(msgs) == 1, (wf["reason"], msgs))
+    check("h) removing the role's session (POST unregister) stops the run and tells the director once",
+          r.status_code == 200 and wf["status"] == "stopped" and "removed" in wf["reason"] and len(msgs) == 1,
+          (r.status_code, wf["reason"], msgs))
+    check("h) …and its SKILL folder is gone", had and not skill_dirs(role_sess), (had, skill_dirs(role_sess)))
     await drain()
 
     await run("slow", "job")
     await drain(signals=False)
     wf = latest()
-    so.set_signal_status(wf["signal_id"], "denied")
-    workflow.on_signal_dropped(wf["signal_id"], "denied")
+    role_sess = so.get_session(wf["session_id"])
+    had = bool(skill_dirs(role_sess))
+    r = await api.post(f"/api/signals/{wf['signal_id']}/deny")
     wf = latest()
-    check("h) a denied task message stops the run", wf["status"] == "stopped" and "denied" in wf["reason"], wf["reason"])
+    check("h) a task message denied on the dashboard (POST deny) stops the run",
+          r.status_code == 200 and wf["status"] == "stopped" and "denied" in wf["reason"], (r.status_code, wf["reason"]))
+    check("h) …and its role's SKILL folder is gone", had and not skill_dirs(role_sess), (had, skill_dirs(role_sess)))
 
     await run("slow", "job")
     await drain(signals=False)
     workflow.reconcile()
     check("h) restart keeps a run whose task message is still pending", latest()["status"] == "running")
+    role_sess = so.get_session(latest()["session_id"])
+    had = bool(skill_dirs(role_sess))
     so.set_signal_status(latest()["signal_id"], "running")      # the run died with the old process
     n_msgs = len(wf_msgs())
     workflow.reconcile()
@@ -381,14 +409,21 @@ async def main():
     check("h) restart stops a run with no live task message, naming the step",
           wf["status"] == "stopped" and "step 1 (s1)" in wf["reason"] and len(msgs) == 1
           and "from_step=1" in msgs[0], (wf["status"], wf["reason"]))
+    check("h) …and its role's SKILL folder is gone", had and not skill_dirs(role_sess), (had, skill_dirs(role_sess)))
     await drain()
     check("h) nothing is left running", not team._rows("SELECT id FROM workflow_runs WHERE status = 'running'"))
     check("h) git status of the repo is clean at the end", git("status", "--porcelain", cwd=REPO) == "",
           git("status", "--porcelain", cwd=REPO))
 
 
+async def with_api():
+    global api
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=so.build_app()), base_url="http://test") as api:
+        await main()
+
+
 try:
-    asyncio.run(main())
+    asyncio.run(with_api())
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 
