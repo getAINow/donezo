@@ -435,7 +435,8 @@ def _workflow_owner(from_role: str, workspace_id: str = ""):
 async def define_workflow(from_role: str, name: str, purpose: str, steps: list[dict], workspace_id: str = ""):
     """Save a workflow: a named, ordered list of roles that run one after the other, each with one
     job. You write every role's playbook yourself, from the goal and the tools that role needs.
-    Saving under an existing name replaces that workflow. Running a workflow is not available yet.
+    Saving under an existing name replaces that workflow; a run already in flight keeps its steps.
+    Start it with run_workflow.
 
     Args:
         from_role: your exact session name.
@@ -459,7 +460,8 @@ async def define_workflow(from_role: str, name: str, purpose: str, steps: list[d
 @mcp.tool()
 async def list_workflows(from_role: str, workspace_id: str = ""):
     """Your workflows: name, purpose and the roles in run order, each with its one-line job (not
-    the playbook texts). Roles run in order, one job per role. Running a workflow is not available yet."""
+    the playbook texts). Roles run in order, one job per role. A workflow with a running run shows
+    its current step."""
     wf, ws, me, err = _workflow_owner(from_role, workspace_id)
     if err:
         return err
@@ -468,8 +470,61 @@ async def list_workflows(from_role: str, workspace_id: str = ""):
         return "You have no workflows yet."
     return "\n".join(
         f"{r['name']} — {r['purpose']}\n" + "\n".join(
-            f"  {i}. {s['role']}: {s['job'].splitlines()[0]}" for i, s in enumerate(r["steps"], 1))
+            [f"  {i}. {s['role']}: {s['job'].splitlines()[0]}" for i, s in enumerate(r["steps"], 1)]
+            + [ln for ln in [wf.progress_line(me["id"], r["name"])] if ln])
         for r in rows)
+
+
+@mcp.tool()
+async def run_workflow(from_role: str, name: str, job: str, from_step: int = 1, workspace_id: str = ""):
+    """Run one of your workflows: its roles run one after the other, each as a fresh session in your
+    folder. Returns at once; you get one message, [WORKFLOW DONE] or [WORKFLOW STOPPED], at the end.
+    One running workflow at a time.
+
+    Args:
+        from_role: your exact session name.
+        name: the workflow's name (list_workflows).
+        job: what this run should produce, given to every role. May be empty only when resuming.
+        from_step: 1 = from the start. N > 1 resumes at step N, carrying the reports of the earlier
+                   steps from your latest run of this workflow; an empty job reuses that run's job.
+        workspace_id: your workspace, if your name exists in several.
+    """
+    wf, ws, me, err = _workflow_owner(from_role, workspace_id)
+    if err:
+        return err
+    res = wf.start(ws, me["id"], name, job, from_step)
+    if res.get("error"):
+        return f"⛔ {res['error']}"
+    return (f"Workflow run {res['id']} started at step {res['step']}/{res['total']}. End your turn; "
+            f"you will be messaged when it finishes or stops.")
+
+
+@mcp.tool()
+async def cancel_workflow(from_role: str, workspace_id: str = ""):
+    """Cancel your running workflow: the current role is stopped and nothing more runs."""
+    wf, ws, me, err = _workflow_owner(from_role, workspace_id)
+    if err:
+        return err
+    res = wf.cancel_run(me["id"])
+    return f"⛔ {res['error']}" if res.get("error") else f"Cancelled workflow run {res['id']}."
+
+
+@mcp.tool()
+async def finish_step(from_role: str, result: str, report: str, back_to: str = "", workspace_id: str = ""):
+    """Workflow roles only: end your step, exactly once, then end your turn.
+
+    Args:
+        from_role: your exact session name.
+        result: done = your job is finished; reject = an earlier step's work is not good enough.
+        report: on done, what you produced, where, and the evidence; on reject, the findings.
+        back_to: on reject, the earlier role to send the work back to (empty = the step before).
+        workspace_id: your workspace.
+    """
+    orch, me, err = _caller(from_role, workspace_id)
+    if err:
+        return err
+    import workflow
+    return workflow.finish_step(me["id"], result, report, back_to)
 
 
 def _board_owner(from_role: str, workspace_id: str = ""):
