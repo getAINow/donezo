@@ -419,6 +419,59 @@ async def cancel_subagent(from_role: str, subtask_id: str, workspace_id: str = "
     return f"⛔ {res['error']}" if res.get("error") else f"Cancelled {subtask_id}."
 
 
+def _workflow_owner(from_role: str, workspace_id: str = ""):
+    """(workflow module, workspace, your session, error). Team sessions define no workflows."""
+    orch, me, err = _caller(from_role, workspace_id)
+    if err:
+        return None, "", None, err
+    import team
+    import workflow
+    if team.is_team_session(me):
+        return None, "", None, "⛔ sub-agents and verifiers have no workflows — report back to your director."
+    return workflow, me.get("workspace_id") or orch.DEFAULT_WORKSPACE, me, ""
+
+
+@mcp.tool()
+async def define_workflow(from_role: str, name: str, purpose: str, steps: list[dict], workspace_id: str = ""):
+    """Save a workflow: a named, ordered list of roles that run one after the other, each with one
+    job. You write every role's playbook yourself, from the goal and the tools that role needs.
+    Saving under an existing name replaces that workflow. Running a workflow is not available yet.
+
+    Args:
+        from_role: your exact session name.
+        name: lowercase letters, digits and dashes, 1-40 characters (e.g. shoot-scene).
+        purpose: one line (max 300 characters) saying what the workflow is for.
+        steps: 1-12 objects, in run order: {"role": unique role name (lowercase, digits, dashes;
+               not feature/bugfix/refactor/investigate/verify/reflect/scout), "job": what this
+               role does in every run, "playbook": the full instructions of the role (max 20000
+               characters), "tools": list of tool names the role may use (may be empty)}.
+        workspace_id: your workspace, if your name exists in several.
+    """
+    wf, ws, me, err = _workflow_owner(from_role, workspace_id)
+    if err:
+        return err
+    res = wf.define(ws, me["id"], name, purpose, steps)
+    if res.get("error"):
+        return f"⛔ {res['error']}"
+    return f"Workflow '{res['name']}' {res['status']}: " + " → ".join(res["roles"])
+
+
+@mcp.tool()
+async def list_workflows(from_role: str, workspace_id: str = ""):
+    """Your workflows: name, purpose and the roles in run order, each with its one-line job (not
+    the playbook texts). Roles run in order, one job per role. Running a workflow is not available yet."""
+    wf, ws, me, err = _workflow_owner(from_role, workspace_id)
+    if err:
+        return err
+    rows = wf.list_for(me["id"])
+    if not rows:
+        return "You have no workflows yet."
+    return "\n".join(
+        f"{r['name']} — {r['purpose']}\n" + "\n".join(
+            f"  {i}. {s['role']}: {s['job'].splitlines()[0]}" for i, s in enumerate(r["steps"], 1))
+        for r in rows)
+
+
 def _board_owner(from_role: str, workspace_id: str = ""):
     """(board module, workspace, your session, error). Team sessions have no board."""
     orch, me, err = _caller(from_role, workspace_id)
