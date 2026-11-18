@@ -754,13 +754,15 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     return {"id": st_id, "status": "queued"}
 
 
-async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo, model=TEAM_MODEL):
-    """Dựng một phiên đội trên model (mặc định TEAM_MODEL) ở mức effort cho trước. Trả (session, err)."""
+async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo, model=TEAM_MODEL,
+                         skill=""):
+    """Dựng một phiên đội trên model (mặc định TEAM_MODEL) ở mức effort cho trước. Trả (session, err).
+    skill: văn bản SKILL có sẵn (vai của workflow) thay cho playbook dựng sẵn."""
     so = _so()
     # Theo cwd, không theo repo: subtask handoff không lưu repo mà verifier của nó vẫn chạy ở đây.
     await asyncio.to_thread(_exclude_team_skills, cwd)
     res = await so.engine_for("claude").spawn(
-        name, cwd=cwd, skill=playbook_text(playbook, repo), model=model,
+        name, cwd=cwd, skill=skill or playbook_text(playbook, repo), model=model,
         effort=effort, permission_mode=director.get("permission_mode", ""),
         workspace_id=workspace_id)
     if not res or res.get("error"):

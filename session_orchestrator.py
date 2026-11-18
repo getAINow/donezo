@@ -4829,8 +4829,11 @@ async def _finish_terminal_turn(sig, run_id, status, text):
     publish({"type": "signal", "id": sig["id"], "status": status, "session": sid,
              "workspace_id": wsid, **({"result": text} if ok else {})})
     import team
-    await team.after_run(sig, {"signal": sig["id"], "status": status, "result": text,
-                               "reason": "" if ok else text, "tokens": 0, "run_id": run_id})
+    r = {"signal": sig["id"], "status": status, "result": text, "reason": "" if ok else text,
+         "tokens": 0, "run_id": run_id}
+    await team.after_run(sig, r)
+    import workflow
+    await workflow.after_run(sig, r)
 
 
 async def process_signal(signal):
@@ -4843,6 +4846,8 @@ async def process_signal(signal):
     if r and r.get("status") != "skipped":
         import team
         await team.after_run(signal, r)
+        import workflow
+        await workflow.after_run(signal, r)
     return r
 
 
@@ -5882,6 +5887,8 @@ def build_app():
             return JSONResponse({"error": "not found"}, status_code=404)
         import team
         team.on_session_removed(sid)
+        import workflow
+        workflow.on_session_removed(sid)
         unregister_session(sid)
         await editor_stop(sid)   # nvim (+ pyright/gopls) sống tiếp trong tmux mà UI không còn card để đóng
         publish({"type": "session", "id": sid, "status": "removed", "workspace_id": s.get("workspace_id")})
@@ -6576,6 +6583,8 @@ def build_app():
         if status == "denied":
             import team
             team.on_signal_dropped(sig_id, "denied")   # subtask chờ signal này không đứng mãi
+            import workflow
+            workflow.on_signal_dropped(sig_id, "denied")
         return JSONResponse({"id": sig_id, "status": status})
 
     async def api_approve(request: Request):
@@ -6809,6 +6818,8 @@ def build_app():
         import team
         # Task nền + run dở của đội đã chết cùng tiến trình cũ: kết thúc hoặc kiểm lại (team.py).
         team.reconcile()
+        import workflow
+        workflow.reconcile()
         team.sweep_soon()   # worktree của việc đã merge từ lần chạy trước
         import planner
         planner.run_due()   # planner nào tới hạn trong lúc server tắt
