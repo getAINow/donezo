@@ -180,7 +180,10 @@ def migrate(conn):
                      # effort_start: mức lúc giao; effort: mức hiện tại (nâng sau mỗi FAIL)
                      ("effort_start", "TEXT NOT NULL DEFAULT ''"), ("effort", "TEXT NOT NULL DEFAULT ''"),
                      # cleaned: sweep_merged gỡ worktree + nhánh vì đã merge (discarded = người dùng bỏ)
-                     ("cleaned", "INTEGER NOT NULL DEFAULT 0")):
+                     ("cleaned", "INTEGER NOT NULL DEFAULT 0"),
+                     # tools: '' = không giới hạn; việc của một vai workflow = JSON {"tools": tools của
+                     # bước, "cwd": thư mục director} — verifier dựng sau khi bước đã xong vẫn đọc được
+                     ("tools", "TEXT NOT NULL DEFAULT ''")):
         if col not in tcols:
             conn.execute(f"ALTER TABLE subtasks ADD COLUMN {col} {ddl}")
     scols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
@@ -711,11 +714,14 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     if not director:
         return {"error": "director session not found"}
     import workflow                     # noqa: PLC0415 — workflow imports team
+    tools = ""
     if is_team_session(director):
         # The one team session that delegates: the current role of a running workflow run.
-        if not workflow.role_run(director_id):
+        run = workflow.role_run(director_id)
+        if not run:
             return {"error": "a sub-agent cannot spawn sub-agents — report back and let your director "
                              "split the work"}
+        tools = json.dumps({"tools": run["steps"][run["step"]]["tools"], "cwd": director.get("cwd") or ""})
     elif run := workflow.running_for(director_id):
         return {"error": f"your workflow run {run['id']} is running: its roles delegate and merge in your "
                          f"folder — wait for it to end or cancel_workflow first"}
@@ -747,10 +753,10 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
     effort = start_effort(ws, playbook, effort)
     model = builder_model(model, effort)
     _exec("INSERT INTO subtasks (id, workspace_id, director_id, kind, playbook, title, brief, "
-          "done_when, model, effort_start, effort, status, created_at, updated_at) "
-          "VALUES (?, ?, ?, 'subagent', ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+          "done_when, model, effort_start, effort, tools, status, created_at, updated_at) "
+          "VALUES (?, ?, ?, 'subagent', ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
           (st_id, ws, director_id, playbook, str(title or "")[:120], str(brief), str(done_when),
-           model, effort, effort, now, now))
+           model, effort, effort, tools, now, now))
     so.publish({"type": "team", "subtask": st_id, "status": "queued",
                 "workspace_id": director.get("workspace_id")})
     if card_id:
@@ -761,19 +767,33 @@ def spawn_subagent(director_id, playbook, brief, done_when, title="", effort="",
 
 
 async def _spawn_session(name, cwd, playbook, effort, director, workspace_id, repo, model=TEAM_MODEL,
-                         skill=""):
+                         skill="", tools=None):
     """Dựng một phiên đội trên model (mặc định TEAM_MODEL) ở mức effort cho trước. Trả (session, err).
-    skill: văn bản SKILL có sẵn (vai của workflow) thay cho playbook dựng sẵn."""
+    skill: văn bản SKILL có sẵn (vai của workflow) thay cho playbook dựng sẵn.
+    tools: allow list (workflow.tool_list) → phiên chạy dontAsk chỉ với đúng các tool đó."""
     so = _so()
     # Theo cwd, không theo repo: subtask handoff không lưu repo mà verifier của nó vẫn chạy ở đây.
     await asyncio.to_thread(_exclude_team_skills, cwd)
     res = await so.engine_for("claude").spawn(
         name, cwd=cwd, skill=skill or playbook_text(playbook, repo), model=model,
-        effort=effort, permission_mode=director.get("permission_mode", ""),
-        workspace_id=workspace_id)
+        effort=effort, permission_mode="dontAsk" if tools else director.get("permission_mode", ""),
+        allowed_tools=tools, workspace_id=workspace_id)
     if not res or res.get("error"):
         return None, (res or {}).get("error") or "spawn failed"
     return res, ""
+
+
+def _role_tools(st, kind, name):
+    """Allow list of a workflow role's sub-agent or verifier (None = not limited). In a worktree it
+    also gets the role folder's per-folder MCP servers when its list names an MCP tool."""
+    if not st.get("tools"):
+        return None
+    import workflow                     # noqa: PLC0415 — workflow imports team
+    lim = json.loads(st["tools"])
+    tools = workflow.tool_list(kind, lim["tools"])
+    if st["worktree"] and any(t.startswith("mcp__") for t in tools):
+        _so().write_team_mcp(name, lim["cwd"])
+    return tools
 
 
 async def _start_subagent(st_id):
@@ -805,7 +825,8 @@ async def _start_subagent(st_id):
         return
     name = f"sub-{st_id[3:]}-{st['playbook']}"
     sess, err = await _spawn_session(name, cwd, st["playbook"], st["effort"], director,
-                                     st["workspace_id"], repo, st["model"])
+                                     st["workspace_id"], repo, st["model"],
+                                     tools=_role_tools(st, "subagent", name))
     if err:
         return _fail(get_subtask(st_id), f"could not start the sub-agent: {err}")
     _set_team(sess["id"], director["id"], "subagent")
@@ -907,7 +928,7 @@ async def _start_verifier(st, _from=("verifying",), effort=VERIFY_EFFORT):
              (f"sub-{st['id'][3:]}-verify%",))["n"] + 1
     name = f"sub-{st['id'][3:]}-verify{n}"
     sess, err = await _spawn_session(name, cwd, "verify", effort, director, st["workspace_id"],
-                                     st["repo"])
+                                     st["repo"], tools=_role_tools(st, "verifier", name))
     if err:
         return _fail(get_subtask(st["id"]), f"could not start a verifier: {err}")
     _set_team(sess["id"], st["director_id"], "verifier")

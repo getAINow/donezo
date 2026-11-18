@@ -446,6 +446,11 @@ async def define_workflow(from_role: str, name: str, purpose: str, steps: list[d
                not feature/bugfix/refactor/investigate/verify/reflect/scout), "job": what this
                role does in every run, "playbook": the full instructions of the role (max 20000
                characters), "tools": list of tool names the role may use (may be empty)}.
+               tools is enforced: a role can use only what it lists, plus basics it always gets
+               (reading files, searching them, git commands, and the signal tools to delegate to
+               sub-agents and to finish its step). Edit, Write, the full shell (Bash), web tools
+               and every MCP tool (e.g. mcp__<server>__<tool>) must be listed to be usable. The
+               sub-agents a role delegates to, and their verifiers, get the same list.
         workspace_id: your workspace, if your name exists in several.
     """
     wf, ws, me, err = _workflow_owner(from_role, workspace_id)

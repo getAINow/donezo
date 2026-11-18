@@ -2666,6 +2666,40 @@ def _planner_flags(session):
             "--max-budget-usd", planner.MAX_BUDGET_USD]
 
 
+def team_mcp_file(name):
+    return DB_DIR / "team-mcp" / f"{ORCH_PORT}-{name}.json"
+
+
+def write_team_mcp(name, folder):
+    """A workflow role's sub-agent or verifier runs in a worktree, where the per-folder MCP servers of
+    the director's folder (~/.claude.json projects[folder] + <folder>/.mcp.json) do not reach it: copy
+    them to a file of its own, owner-only (it can hold tokens). No such servers → no file."""
+    f = team_mcp_file(name)
+    servers = {**(_json_config(Path(folder) / ".mcp.json").get("mcpServers") or {}),
+               **(((_claude_config().get("projects") or {}).get(folder) or {}).get("mcpServers") or {})}
+    if not servers:
+        f.unlink(missing_ok=True)
+        return
+    f.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(f, 0o600)              # O_CREAT's mode does not apply to a file that already existed
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        json.dump({"mcpServers": servers}, out)
+
+
+def _tool_flags(name, allowed, perm_mode):
+    """--allowedTools / --permission-mode of a run. dontAsk + an allow list = a limited team session
+    (workflow.tool_list): --tools removes the built-ins it does not list, and --mcp-config adds the
+    director folder's servers when write_team_mcp made a file for it (not strict: user servers stay)."""
+    flags = (["--allowedTools", " ".join(allowed)] if allowed else []) + (
+        ["--permission-mode", perm_mode] if perm_mode else [])
+    if perm_mode != "dontAsk" or not allowed:
+        return flags
+    builtins = dict.fromkeys(t.split("(")[0] for t in allowed if not t.startswith("mcp__"))
+    f = team_mcp_file(name)
+    return ["--tools", " ".join(builtins), *flags, *(["--mcp-config", str(f)] if f.exists() else [])]
+
+
 async def _run_claude(session, prompt, on_event=None, dry_run=False):
     """Chạy `claude -p --resume <id>` với allowlist. Trả dict kết quả.
 
@@ -2699,14 +2733,8 @@ async def _run_claude(session, prompt, on_event=None, dry_run=False):
         if STREAM_PARTIAL:
             cmd.append("--include-partial-messages")
     sealed = _planner_flags(session)
-    if sealed is not None:
-        cmd += sealed
-    else:
-        if allowed:
-            cmd += ["--allowedTools", " ".join(allowed)]
-        perm_mode = session.get("permission_mode") or DEFAULT_PERMISSION_MODE
-        if perm_mode:
-            cmd += ["--permission-mode", perm_mode]
+    cmd += sealed if sealed is not None else _tool_flags(
+        session["name"], allowed, session.get("permission_mode") or DEFAULT_PERMISSION_MODE)
     cmd += _claude_model_effort_flags(session)
 
     cwd = session.get("cwd") or None
@@ -3339,8 +3367,8 @@ async def spawn_session(name, project="", cwd="", allowed_tools=None, permission
         if model:
             cmd += ["--model", model]
         perm_mode = permission_mode or DEFAULT_PERMISSION_MODE
-        if perm_mode:
-            cmd += ["--permission-mode", perm_mode]  # CLI 2.1.200: Manual mặc định chặn tool headless
+        # CLI 2.1.200: Manual mặc định chặn tool headless. Allow list ở lượt đầu: chỉ phiên bị giới hạn.
+        cmd += _tool_flags(name, (allowed_tools or []) if perm_mode == "dontAsk" else [], perm_mode)
         eff = clamp_effort(effort or DEFAULT_EFFORT, CLAUDE_MAX_EFFORT)
         if eff:
             cmd += ["--effort", eff]
