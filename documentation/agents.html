@@ -230,6 +230,11 @@ asks for three things: see <a href="getting-started.html#director">Start a direc
     is a general role that hands work to named colleagues. On its first run, the agent fills in the project details itself.</li>
   <li><strong>Project folder:</strong> where it works. Several agents can share one.</li>
 </ul>
+<p>A <span class="ui">director</span> needs a git repository with at least one commit: each sub-agent works in its
+own copy of the project, made from the last commit. If the folder has none, the dialog stays open and offers
+<span class="ui">Set up git here</span>. It creates a local git repository in that folder and commits the files in it,
+skipping what a <code>.gitignore</code> lists. Nothing is uploaded. Then it creates the agent. It refuses your home
+folder and a drive root. Other playbooks do not need git.</p>
 
 <h3 id="models">Models and effort</h3>
 <p>The model decides which CLI runs the agent.</p>
