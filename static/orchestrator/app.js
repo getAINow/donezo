@@ -917,7 +917,7 @@ function newAgent() {
   $("na-modal").hidden = false;
   $("sp-role").focus();
 }
-function newAgentClose() { $("na-modal").hidden = true; closeDirBrowse(); }
+function newAgentClose() { $("na-modal").hidden = true; $("sp-git").hidden = true; closeDirBrowse(); }
 window.newAgent = newAgent; window.newAgentClose = newAgentClose;
 
 // ── Command palette (shell) ─────────────────────────────────────────────────
@@ -3589,6 +3589,7 @@ async function spawnAgent() {
   if (!effort) $("sp-more").open = true;
   if (missing) return showMsg("sp-msg", missing, false);
   showMsg("sp-msg", "Spawning…", true);
+  $("sp-git").hidden = true;
   $("sp-submit").disabled = true;
   try {
     const r = await api("/api/sessions/spawn", "POST", {
@@ -3608,11 +3609,29 @@ async function spawnAgent() {
     const wid = spSel.ws;
     await refreshAll();
     selectWorkspace(wid);
-  } catch (e) { showMsg("sp-msg", "Error: " + e, false); }
+  } catch (e) {
+    // api() rejects with the response text; a director in a folder without a commit gets JSON
+    // with needs_git → offer to set git up there instead of a dead end.
+    let j = {};
+    try { j = JSON.parse(e); } catch { /* not JSON */ }
+    if (j.needs_git) { spGitCwd = j.cwd; $("sp-git").hidden = false; showMsg("sp-msg", j.error, false); }
+    else showMsg("sp-msg", "Error: " + e, false);
+  }
   finally { $("sp-submit").disabled = false; }
 }
 
-window.spawnAgent = spawnAgent;
+// Folder the server said needs git (it resolved an empty cwd to the workspace folder).
+let spGitCwd = "";
+async function spGitSetup() {
+  $("sp-git-btn").disabled = true;
+  showMsg("sp-msg", "Setting up git…", true);
+  try { await api("/api/git/setup", "POST", { cwd: spGitCwd }); }
+  catch (e) { return showMsg("sp-msg", "Error: " + e, false); }
+  finally { $("sp-git-btn").disabled = false; }
+  await spawnAgent();   // the one retry; it closes the dialog on success
+}
+
+window.spawnAgent = spawnAgent; window.spGitSetup = spGitSetup;
 
 // ── Activity: signal + run trên MỘT timeline ────────────────────────────────
 let actSignals = [], actRuns = [], actSessions = [];

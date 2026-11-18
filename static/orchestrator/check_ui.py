@@ -585,6 +585,20 @@ check("a sub-task card shows its model before the effort only when it has one",
       else {"stCard must add the model part only when s.model is set"},
       "an empty model must leave the plain effort line")
 
+# Director cần git: spawn trả needs_git → dialog phải hiện nút Set up git here, gọi /api/git/setup
+# rồi thử spawn lại đúng một lần. Mất một mảnh là người dùng kẹt ở lỗi không có lối ra.
+gaps = set()
+if 'id="sp-git"' not in HTML or 'onclick="spGitSetup()">Set up git here</button>' not in HTML \
+        or "Nothing is uploaded." not in HTML:
+    gaps.add("index.html needs #sp-git with the Set up git here button and its explanation line")
+if "if (j.needs_git)" not in spawn or '$("sp-git").hidden = false' not in spawn:
+    gaps.add("spawnAgent must show #sp-git when the server answers needs_git")
+setup = JS[JS.find("async function spGitSetup()"):JS.find("window.spawnAgent = spawnAgent")]
+if '"/api/git/setup"' not in setup or setup.count("await spawnAgent()") != 1:
+    gaps.add("spGitSetup must call /api/git/setup and then retry spawnAgent once")
+check("a director without git gets a Set up git here button that retries the spawn", gaps,
+      "the dialog must offer git setup and retry instead of a dead end")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)

@@ -381,6 +381,10 @@
   .na-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px;
     border-top: 1px solid var(--border); }
   .na-foot .hint { flex: 1 1 240px; margin: 0; }
+  .na-git { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .na-git[hidden] { display: none; }
+  .na-git .hint { flex: 1; margin: 0; }
+  .form-card .na-git button { width: auto; margin-top: 0; padding: 6px 14px; }
   .form-card .na-foot button { width: auto; margin-top: 0; padding: 8px 18px; }
 
   /* ── Panels / tables ──────────────────────────────────────────────────── */
@@ -1745,6 +1749,10 @@
       </details>
     </fieldset>
     <div id="sp-msg" class="form-msg"></div>
+    <div id="sp-git" class="na-git" hidden>
+      <button type="button" id="sp-git-btn" class="secondary" onclick="spGitSetup()">Set up git here</button>
+      <span class="hint">Creates a local git repository in that folder and commits the files in it. Nothing is uploaded.</span>
+    </div>
     <div class="na-foot">
       <span class="hint">On its first run the agent reads the project and fills in its own playbook.</span>
       <button type="button" class="secondary" onclick="newAgentClose()">Cancel</button>

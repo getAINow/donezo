@@ -5320,8 +5320,16 @@ def openapi_spec():
                 "requestBody": {"required": True,
                                 "content": {"application/json": {"schema": _oa_spawn_body()}}},
                 "responses": {"200": _oa_json(desc="The session just created"),
-                              "400": _oa_json(desc="Missing name, or unsupported engine"),
+                              "400": _oa_json(desc="Missing name, unsupported engine, or a director "
+                                                   "in a folder without a git commit (`needs_git: true`)"),
                               "500": _oa_json(desc="The CLI returned no session id")}}},
+            "/api/git/setup": {"post": {
+                "tags": ["agents"], "summary": "Make a folder a local git repo with a first commit "
+                                               "(no-op if it already has one; never pushes)",
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"cwd": {"type": "string"}}, "required": ["cwd"]}}}},
+                "responses": {"200": _oa_json(desc="ok; `created` says whether a commit was made"),
+                              "400": _oa_json(desc="Folder missing, home folder, filesystem root, or git failed")}}},
             "/api/workspaces": {
                 "get": {"tags": ["agents"], "summary": "List workspaces",
                         "responses": {"200": _oa_json({"type": "array"}, "Array of workspaces")}},
@@ -5806,6 +5814,18 @@ def build_app():
         if eng_name not in ENGINES:
             return JSONResponse({"error": f"engine '{eng_name}' is not supported (available: {', '.join(ENGINES)})"},
                                 status_code=400)
+        # Director giao việc qua worktree tách từ HEAD → thư mục không phải repo có commit thì
+        # director không giao được gì. Chặn TRƯỚC khi ghi bất cứ thứ gì; dashboard đề nghị
+        # /api/git/setup. Thư mục giải y như spawn_session.
+        if (body.get("template") or "").strip() == "director":
+            folder = body.get("cwd", "") or (workspace_root(wid) if wid != DEFAULT_WORKSPACE else "") \
+                or os.getcwd()
+            import team
+            if not team.head_sha(folder):
+                return JSONResponse({"error": "A director needs a git repository with at least one commit, "
+                                              "so its sub-agents can work in their own copies. "
+                                              f"'{folder}' has none yet.",
+                                     "needs_git": True, "cwd": folder}, status_code=400)
         # engine.spawn: cwd truyền vào giữ nguyên; rỗng thì tự về thư mục workspace (≠ default).
         res = await engine_for(eng_name).spawn(
             body["name"], project=body.get("project", ""), cwd=body.get("cwd", ""),
@@ -5819,6 +5839,39 @@ def build_app():
         # spawn trả về ngay (bootstrap là một run CLI đầy đủ, chặn ở đây là treo cả UI).
         _maybe_bootstrap_skill(res, eng_name)
         return JSONResponse(res)
+
+    async def api_git_setup(request: Request):
+        """Biến một thư mục thành repo có commit đầu (cho director). Repo đã có commit → không
+        đụng. Không push, không thêm remote. Từ chối $HOME và gốc filesystem."""
+        body = await request.json()
+        raw = (body.get("cwd") or "").strip()
+        p = Path(raw).expanduser().resolve() if raw else None
+        if not p or not p.is_dir():
+            return JSONResponse({"error": f"Folder '{raw}' does not exist"}, status_code=400)
+        if p == Path.home().resolve() or p.parent == p:
+            return JSONResponse({"error": f"Refusing to set up git in '{p}': pick a project folder, "
+                                          "not your home folder or a drive root"}, status_code=400)
+        import team
+
+        def setup():
+            d = str(p)
+            if team.head_sha(d):
+                return False, ""
+            if not team.repo_root(d):
+                rc, out = team._git(["init", "-q"], d)
+                if rc:
+                    return False, out or "git init failed"
+            for args in (["add", "-A"],
+                         [*team._identity_args(d), "commit", "-q", "--no-verify", "--allow-empty",
+                          "-m", "Initial commit"]):
+                rc, out = team._git(args, d, timeout=300)
+                if rc:
+                    return False, out or "git failed"
+            return True, ""
+        created, err = await asyncio.to_thread(setup)
+        if err:
+            return JSONResponse({"error": err.strip()[:500]}, status_code=400)
+        return JSONResponse({"ok": True, "cwd": str(p), "created": created})
 
     async def api_unregister(request: Request):
         sid = request.path_params["sid"]
@@ -6814,6 +6867,7 @@ def build_app():
         Route("/api/sessions", api_register, methods=["POST"]),
         Route("/api/sessions/spawn", api_spawn, methods=["POST"]),
         Route("/api/fs", api_fs_list),
+        Route("/api/git/setup", api_git_setup, methods=["POST"]),
         Route("/api/cli-sessions", api_cli_sessions),
         Route("/api/cli-sessions/delete", api_delete_cli_session, methods=["POST"]),
         Route("/api/unregistered", api_unregistered),
