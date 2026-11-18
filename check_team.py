@@ -612,6 +612,8 @@ async def main():
     sub = so.get_session(team.get_subtask(st_id)["session_id"])
     r = team.spawn_subagent(sub["id"], "feature", "x", "y")
     check("a sub-agent cannot spawn sub-agents", "cannot spawn" in r.get("error", ""), str(r))
+    r = team.spawn_subagent(team.get_subtask(st_id)["verifier_id"], "feature", "x", "y")
+    check("a verifier cannot spawn sub-agents", "cannot spawn" in r.get("error", ""), str(r))
     try:
         so.enqueue_signal("dir-1", "hello", sub["name"], workspace_id=WS)
         check("a sub-agent cannot send signals", False, "enqueued")
