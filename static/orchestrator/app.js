@@ -4596,11 +4596,13 @@ function wfDefCard(d) {
 
 async function wfPlaybook(el) {
   const c = el.closest("[data-key]"), key = c.dataset.key, pre = el.querySelector("pre");
-  if (!el.open || WF_PB[key]) return;
-  try {
-    WF_PB[key] = (await api(`/api/workflows/${encodeURIComponent(c.dataset.dir)}/${encodeURIComponent(c.dataset.name)}`)).steps.map((s) => s.playbook);
-    pre.textContent = WF_PB[key][+el.dataset.k] ?? "";
-  } catch (e) { pre.textContent = "Could not load the playbook."; }
+  if (!el.open) return;
+  if (!WF_PB[key]) {
+    try {
+      WF_PB[key] = (await api(`/api/workflows/${encodeURIComponent(c.dataset.dir)}/${encodeURIComponent(c.dataset.name)}`)).steps.map((s) => s.playbook);
+    } catch (e) { pre.textContent = "Could not load the playbook."; return; }
+  }
+  pre.textContent = WF_PB[key][+el.dataset.k] ?? "";
 }
 window.wfPlaybook = wfPlaybook;
 

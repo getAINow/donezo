@@ -622,7 +622,7 @@ for field in ("p.role", "p.job", "t)", "d.name", "d.purpose", "d.director_name")
     if f"esc({field}" not in d and f"esc({field[:-1]})" not in d:
         gaps.add(f"wfDefCard must escape {field}")
 pb = JS[JS.find("async function wfPlaybook("):JS.find("window.wfPlaybook")]
-if "textContent" not in pb or "innerHTML" in pb:
+if "textContent" not in pb or "innerHTML" in pb or "if (!el.open || WF_PB" in pb:
     gaps.add("wfPlaybook must put the playbook in with textContent")
 if "confirm(" not in fn("teamWfStop") or "/api/workflows/runs/" not in fn("teamWfStop"):
     gaps.add("teamWfStop must confirm and POST /api/workflows/runs/<id>/cancel")
