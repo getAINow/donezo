@@ -472,6 +472,20 @@ def overview(workspace_id, sessions):
     return out
 
 
+def definitions(workspace_id, sessions):
+    """The Team tab's saved workflows: every definition of a director still in this workspace, by director
+    name then workflow name. Steps carry the full job and tools; playbooks are never sent (get() has them)."""
+    running = {(r["director_id"], r["name"]) for r in team._rows(
+        "SELECT director_id, name FROM workflow_runs WHERE workspace_id = ? AND status = 'running'", (workspace_id,))}
+    out = [{"director_id": w["director_id"], "director_name": sessions[w["director_id"]]["name"],
+            "name": w["name"], "purpose": w["purpose"], "updated_at": w["updated_at"],
+            "running": (w["director_id"], w["name"]) in running,
+            "steps": [{k: p[k] for k in ("role", "job", "tools")} for p in w["steps"]]}
+           for w in map(_load, team._rows("SELECT * FROM workflows WHERE workspace_id = ?", (workspace_id,)))
+           if w["director_id"] in sessions]
+    return sorted(out, key=lambda d: (d["director_name"], d["name"]))
+
+
 def on_session_removed(session_id):
     """Director removed → its run is cancelled. Current role removed → the run stops."""
     if running_for(session_id):

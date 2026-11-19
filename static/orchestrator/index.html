@@ -733,6 +733,13 @@
   .team-wf[hidden] { display: none; }
   .team-wf h3 { margin: 0; font-size: 13px; font-weight: 600; }
   .wf-runs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+  .wf-defs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; align-items: start; }
+  .wf-defs:empty { display: none; }
+  .wf-sub { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .wf-def { min-width: 0; overflow-wrap: anywhere; }
+  .wf-def .chips { margin-top: 4px; }
+  .wf-def .wf-step > b::before { content: attr(data-n) ". "; }
+  .wf-def .wf-step details { margin-top: 4px; }
   .st-card.wf-running { border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
   .st-card.wf-done { border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
   .st-card.wf-stopped { border-color: color-mix(in srgb, var(--red) 50%, var(--border)); }
@@ -1565,6 +1572,7 @@
           <section aria-label="Sub-agent pipeline" class="team-pipe">
             <section id="team-wf" class="team-wf" aria-label="Workflows" hidden>
               <h3>Workflows</h3>
+              <div id="team-wf-defs" class="wf-defs"></div>
               <div id="team-wf-runs" class="wf-runs"></div>
             </section>
             <p class="team-lead">Each sub-agent works in its own git worktree. Nothing counts as done

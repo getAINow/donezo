@@ -1666,6 +1666,7 @@ def overview(workspace_id, page=None):
         # khác thì tự tính tuổi sẽ lệch đúng số giờ chênh — dashboard đo lệch theo mốc này.
         "now": so._now(),
         "workflows": workflow.overview(workspace_id, sessions),
+        "workflow_defs": workflow.definitions(workspace_id, sessions),
     }
 
 
@@ -1765,6 +1766,11 @@ def routes():
         import workflow                             # noqa: PLC0415
         return reply(workflow.cancel_by_user(request.path_params["run"]))
 
+    async def api_wf_get(request: Request):
+        import workflow                             # noqa: PLC0415
+        w = workflow.get(request.path_params["director"], request.path_params["name"])
+        return reply({"error": "not found"} if not w else w)
+
     async def api_reverify(request: Request):
         return reply(await reverify(request.path_params["st"]))
 
@@ -1814,6 +1820,7 @@ def routes():
         Route("/api/team/subtasks/{st}/discard", api_discard, methods=["POST"]),
         Route("/api/team/subtasks/{st}/diff", api_diff),
         Route("/api/workflows/runs/{run}/cancel", api_wf_cancel, methods=["POST"]),
+        Route("/api/workflows/{director}/{name}", api_wf_get),
         Route("/api/team/edges", api_edges, methods=["POST"]),
         Route("/api/team/reflect", api_reflect, methods=["POST"]),
         Route("/api/team/proposals/{pid:int}", api_decide, methods=["POST"]),

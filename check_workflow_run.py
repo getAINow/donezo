@@ -672,6 +672,46 @@ async def main():
           team._giver_name({"name": "sub-ab12cd34-2-code-reviewer", "team_role": "role"}) == "code-reviewer"
           and team._giver_name({"name": "lead", "team_role": ""}) == "lead")
 
+    # ── k) saved workflows on the Team tab ──────────────────────────────────
+    SENT = "PLAYBOOK-SENTINEL-7f3a"
+    so.register_session("dir-a", "alpha", cwd=str(REPO), model="", workspace_id="ws_k_a")
+    so.register_session("dir-b", "beta", cwd=str(REPO), model="", workspace_id="ws_k_b")
+
+    def stp(role, tools):
+        return {"role": role, "job": f"{role} job <b>x</b>", "playbook": f"{SENT} {role}", "tools": tools}
+    for did, ws, nm, steps in (
+            ("dir-a", "ws_k_a", "zeta", [stp("a1", ["Edit"]), stp("a2", [])]),
+            ("dir-a", "ws_k_a", "alpha-flow", [stp(f"r{i}", ["Write"] if i == 1 else []) for i in range(4)]),
+            ("dir-b", "ws_k_b", "other", [stp("b1", [])])):
+        check(f"k) define {nm}", workflow.define(ws, did, nm, f"{nm} purpose", steps).get("status") == "created")
+    raw = (await api.get("/api/team", params={"workspace_id": "ws_k_a"})).text
+    t = json.loads(raw)
+    defs = t["workflow_defs"]
+    check("k) A's definitions in name order with director, purpose, steps in order",
+          [d["name"] for d in defs] == ["alpha-flow", "zeta"] and defs[0]["director_name"] == "alpha"
+          and defs[1]["purpose"] == "zeta purpose" and [len(d["steps"]) for d in defs] == [4, 2]
+          and defs[1]["steps"] == [{"role": "a1", "job": "a1 job <b>x</b>", "tools": ["Edit"]},
+                                   {"role": "a2", "job": "a2 job <b>x</b>", "tools": []}]
+          and [s["role"] for s in defs[0]["steps"]] == ["r0", "r1", "r2", "r3"]
+          and not any(d["running"] for d in defs), str(defs)[:300])
+    check("k) B's definition is absent; no playbook text in the payload; run list key unchanged",
+          "other" not in raw and SENT not in raw and t["workflows"] == [] and "directors" in t)
+    seed("wf_run0000k", "dir-a", "running", 0, {})
+    team._exec("UPDATE workflow_runs SET workspace_id = 'ws_k_a', name = 'zeta' WHERE id = 'wf_run0000k'")
+    t = (await api.get("/api/team", params={"workspace_id": "ws_k_a"})).json()
+    check("k) a running run marks its definition", [d["running"] for d in t["workflow_defs"]] == [False, True]
+          and [r["id"] for r in t["workflows"]] == ["wf_run0000k"])
+    r = await api.get("/api/workflows/dir-a/zeta")
+    check("k) detail: steps with playbooks", r.status_code == 200
+          and [s["playbook"] for s in r.json()["steps"]] == [f"{SENT} a1", f"{SENT} a2"], r.text[:200])
+    check("k) detail of an unknown name or director is 404",
+          (await api.get("/api/workflows/dir-a/nope")).status_code == 404
+          and (await api.get("/api/workflows/nobody/zeta")).status_code == 404)
+    await api.post("/api/sessions/dir-a/unregister")
+    t = (await api.get("/api/team", params={"workspace_id": "ws_k_a"})).json()
+    check("k) after the director is removed its definitions are gone", t["workflow_defs"] == [], t["workflow_defs"])
+
+
 
 async def with_api():
     global api
