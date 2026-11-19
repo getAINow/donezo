@@ -605,12 +605,25 @@ check("a director without git gets a Set up git here button that retries the spa
 gaps = set()
 if 'id="team-wf" class="team-wf"' not in HTML or 'id="team-wf-runs"' not in HTML:
     gaps.add("index.html needs #team-wf (hidden by default) with #team-wf-runs above the board")
-if '$("team-wf").hidden = !wf.length' not in fn("teamRender") \
-        or 'keepOpen($("team-wf-runs")' not in fn("teamRender"):
-    gaps.add("teamRender must hide #team-wf without runs and render the runs through keepOpen")
+if '$("team-wf").hidden = !wf.length && !defs.length' not in fn("teamRender") \
+        or 'keepOpen($("team-wf-runs")' not in fn("teamRender") \
+        or 'keepOpen($("team-wf-defs")' not in fn("teamRender"):
+    gaps.add("teamRender must hide #team-wf without runs or definitions and render both through keepOpen")
 if 'r.status === "running" ?' not in fn("wfCard") or "teamWfStop(" not in fn("wfCard") \
         or 'data-st="${esc(r.id)}"' not in fn("wfCard") or "<details>" not in fn("wfCard"):
     gaps.add("wfCard needs data-st, a details per step report and a Stop button only for a running run")
+# Saved workflows are read-only and untrusted text: every agent-written field goes through esc, the
+# playbook loads on first open into a cache that survives the rebuild, and no run/edit/delete control.
+d = fn("wfDefCard")
+if 'id="team-wf-defs"' not in HTML or "data-st=" not in d or "<details" not in d or "button" in d \
+        or "only the basics" not in d or "wfPlaybook" not in d or "WF_PB" not in d:
+    gaps.add("wfDefCard needs #team-wf-defs, data-st, a playbook details, the only-the-basics wording and no buttons")
+for field in ("p.role", "p.job", "t)", "d.name", "d.purpose", "d.director_name"):
+    if f"esc({field}" not in d and f"esc({field[:-1]})" not in d:
+        gaps.add(f"wfDefCard must escape {field}")
+pb = JS[JS.find("async function wfPlaybook("):JS.find("window.wfPlaybook")]
+if "textContent" not in pb or "innerHTML" in pb:
+    gaps.add("wfPlaybook must put the playbook in with textContent")
 if "confirm(" not in fn("teamWfStop") or "/api/workflows/runs/" not in fn("teamWfStop"):
     gaps.add("teamWfStop must confirm and POST /api/workflows/runs/<id>/cancel")
 check("the Team tab shows workflow runs with a confirmed Stop", gaps,
