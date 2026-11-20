@@ -3128,6 +3128,83 @@ def _list_skill_templates():
     return out
 
 
+# Template vai mà nút "Update playbook" được phép dùng (playbook chỉ được chép từ template MỘT lần
+# lúc tạo agent; section mới của template sau đó không bao giờ tới agent cũ).
+PLAYBOOK_TEMPLATES = ("director", "agent")
+
+
+def _md_sections(text):
+    """(head, [(heading, text)]): head = mọi thứ trước '## ' đầu tiên (frontmatter + # title).
+    '## ' nằm trong code fence không phải ranh giới section."""
+    head, secs, fence = [], [], False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+        if not fence and line.startswith("## "):
+            secs.append([line.rstrip(), [line]])
+        elif secs:
+            secs[-1][1].append(line)
+        else:
+            head.append(line)
+    # Section luôn kết thúc bằng đúng một dòng trống: section bị dời chỗ không dính vào heading sau,
+    # và merge lần hai ra đúng từng byte của lần một.
+    norm = lambda ls: "".join(ls).rstrip("\n") + "\n\n"
+    return norm(head), [(h, norm(ls)) for h, ls in secs]
+
+
+def _merge_playbook(current, template, name):
+    """Viết lại playbook hiện tại theo template HIỆN TẠI, giữ phần agent tự viết.
+    Trả (text, {updated, added, kept, unchanged}: [heading]). Hàm thuần: không đọc/ghi file."""
+    tpl_head, tpl = _md_sections(template.replace("<ROLE_NAME>", name))
+    _, cur = _md_sections(current)
+    cur_text = dict(cur)
+    tpl_names = {h for h, _ in tpl}
+    # Section riêng của agent (heading không có trong template) bám theo section đứng NGAY TRƯỚC nó
+    # trong file hiện tại; section riêng nối tiếp nhau thì bám chuỗi.
+    follows, prev = {}, None
+    for h, _ in cur:
+        if h not in tpl_names:
+            follows.setdefault(prev, []).append(h)
+        prev = h
+    summary = {"updated": [], "added": [], "kept": [], "unchanged": []}
+    parts, placed = [tpl_head], set()
+
+    def own_after(anchor):
+        for h in follows.get(anchor, []):
+            if h not in placed:
+                placed.add(h)
+                parts.append(cur_text[h])
+                summary["kept"].append(h.removeprefix("## "))
+                own_after(h)
+
+    own_after(None)
+    for h, t in tpl:
+        label = h.removeprefix("## ")
+        if h in cur_text and _PLACEHOLDER_RE.search(t):   # agent đã điền placeholder của section này
+            parts.append(cur_text[h])
+            summary["kept"].append(label)
+        else:
+            parts.append(t)
+            key = "added" if h not in cur_text else "unchanged" if cur_text[h] == t else "updated"
+            summary[key].append(label)
+        placed.add(h)
+        own_after(h)
+    for h, _ in cur:   # neighbour đã mất → cuối file
+        if h not in placed:
+            placed.add(h)
+            parts.append(cur_text[h])
+            summary["kept"].append(h.removeprefix("## "))
+            own_after(h)
+    return "".join(parts).rstrip("\n") + "\n", summary
+
+
+def _playbook_template_guess(current):
+    title = next((ln for ln in current.splitlines() if ln.startswith("# ")), "")
+    director = title.rstrip().endswith("— director") or any(
+        h == "## Delegating (MCP `signal`)" for h, _ in _md_sections(current)[1])
+    return "director" if director else "agent"
+
+
 def _bootstrap_skill_msg(name, cwd):
     """Prompt one-time nhờ chính agent điền placeholder trong SKILL của nó từ nội dung cwd thật."""
     paths = " và ".join(str(_skill_path(cwd, name, r)) for r in CLI_SKILL_ROOTS)
@@ -5989,6 +6066,38 @@ def build_app():
         _write_role_skill(cwd, name, _role_skill(cwd, name))
         return JSONResponse({"written": [str(_skill_path(cwd, name, r)) for r in missing]})
 
+    async def api_update_playbook(request: Request):
+        """Viết lại playbook theo template HIỆN TẠI (xem _merge_playbook). Không có apply → chỉ
+        xem trước, không ghi gì. apply → lưu SKILL.md.bak cạnh mỗi bản rồi ghi mọi root CLI."""
+        s = get_session(request.path_params["sid"])
+        if not s:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        import team
+        if team.is_team_session(s):
+            return JSONResponse({"error": "team sessions have generated playbooks — nothing to "
+                                          "update from a template"}, status_code=400)
+        body = await request.json()
+        tpl_name = body.get("template") or ""
+        template = _template_skill(tpl_name) if tpl_name in PLAYBOOK_TEMPLATES else ""
+        if not template:
+            return JSONResponse({"error": f"unknown template {tpl_name!r} — use one of "
+                                          f"{', '.join(PLAYBOOK_TEMPLATES)}"}, status_code=400)
+        cwd, name = s.get("cwd") or "", s.get("name") or ""
+        current = _role_skill(cwd, name)
+        if not current.strip():
+            return JSONResponse({"error": "this agent has no playbook to update"}, status_code=400)
+        merged, summary = _merge_playbook(current, template, name)
+        out = {"changed": merged != current, "summary": summary, "template": tpl_name,
+               "template_guess": _playbook_template_guess(current)}
+        if not body.get("apply") or merged == current:
+            return JSONResponse(out)
+        for root in CLI_SKILL_ROOTS:
+            p = _skill_path(cwd, name, root)
+            if p.exists():
+                p.with_name("SKILL.md.bak").write_bytes(p.read_bytes())
+        _write_role_skill(cwd, name, merged)
+        return JSONResponse({**out, "written": list(_skill_paths(cwd, name).values())})
+
     async def _ws_pty(websocket, argv_for, kind, extra_env=None, on_exit=None):
         """PTY thật trong browser (xterm.js): spawn argv_for(session) tại cwd của session, bơm 2
         chiều qua WebSocket.
@@ -6941,6 +7050,7 @@ def build_app():
         Route("/api/sessions/{sid}/skill", api_get_skill),
         Route("/api/sessions/{sid}/skill", api_put_skill, methods=["POST"]),
         Route("/api/sessions/{sid}/skill/sync", api_sync_skill, methods=["POST"]),
+        Route("/api/sessions/{sid}/playbook/update", api_update_playbook, methods=["POST"]),
         Route("/api/sessions/{sid}/compact", api_get_compact),
         Route("/api/sessions/{sid}/compact", api_compact, methods=["POST"]),
         Route("/api/sessions/{sid}/model", api_set_model, methods=["POST"]),
