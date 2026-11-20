@@ -757,7 +757,12 @@
   .wf-step.s-current b { color: var(--blue); }
   .wf-step.s-stopped { background: var(--red-soft); border-color: var(--red); }
   .wf-step.s-pending { color: var(--muted); }
-  .wf-job > summary { color: inherit; font-size: inherit; }
+  .wf-job > summary { color: inherit; font-size: inherit; 
+    display: flex; align-items: baseline; gap: 6px; list-style: none; }
+  .wf-job > summary::-webkit-details-marker { display: none; }
+  .wf-job > summary::before { content: "\25B8"; flex: none; color: var(--muted); }
+  .wf-job[open] > summary::before { content: "\25BE"; }
+  .wf-job > summary .st-title { flex: 1; min-width: 0; }
   .wf-job > summary .st-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     overflow-wrap: anywhere; vertical-align: top; }
   .wf-job[open] > summary .st-title { display: none; }
