@@ -434,7 +434,10 @@ def _workflow_owner(from_role: str, workspace_id: str = ""):
 @mcp.tool()
 async def define_workflow(from_role: str, name: str, purpose: str, steps: list[dict], workspace_id: str = ""):
     """Save a workflow: a named, ordered list of roles that run one after the other, each with one
-    job. You write every role's playbook yourself, from the goal and the tools that role needs.
+    job. A role is a sub-director: it only reads, delegates to sub-agents, reviews and merges; its
+    sub-agents do the hands-on work, each checked by a verifier. You write every role's playbook
+    yourself: how to split the job, what a good brief and done_when look like for it, what to check
+    when reviewing, and what the report must contain.
     Saving under an existing name replaces that workflow; a run already in flight keeps its steps.
     Start it with run_workflow.
 
@@ -445,12 +448,12 @@ async def define_workflow(from_role: str, name: str, purpose: str, steps: list[d
         steps: 1-12 objects, in run order: {"role": unique role name (lowercase, digits, dashes;
                not feature/bugfix/refactor/investigate/verify/reflect/scout), "job": what this
                role does in every run, "playbook": the full instructions of the role (max 20000
-               characters), "tools": list of tool names the role may use (may be empty)}.
-               tools is enforced: a role can use only what it lists, plus basics it always gets
-               (reading files, searching them, git commands, and the signal tools to delegate to
-               sub-agents and to finish its step). Edit, Write, the full shell (Bash), web tools
-               and every MCP tool (e.g. mcp__<server>__<tool>) must be listed to be usable. The
-               sub-agents a role delegates to, and their verifiers, get the same list.
+               characters), "tools": list of tool names the role's SUB-AGENTS get (may be empty)}.
+               tools is enforced for the sub-agents a role delegates to and their verifiers: they
+               can use only what it lists, plus their basics (reading files, searching them, git;
+               a sub-agent also edits files). The full shell (Bash), web tools and every MCP tool
+               (e.g. mcp__<server>__<tool>) must be listed to be usable. The role itself never gets
+               them: it only reads files, runs git, delegates, reviews and finishes its step.
         workspace_id: your workspace, if your name exists in several.
     """
     wf, ws, me, err = _workflow_owner(from_role, workspace_id)
@@ -516,7 +519,8 @@ async def cancel_workflow(from_role: str, workspace_id: str = ""):
 
 @mcp.tool()
 async def finish_step(from_role: str, result: str, report: str, back_to: str = "", workspace_id: str = ""):
-    """Workflow roles only: end your step, exactly once, then end your turn.
+    """Workflow roles only: end your step, exactly once, then end your turn. Refused while a
+    sub-agent you delegated is active, and until at least one of them has passed or failed.
 
     Args:
         from_role: your exact session name.

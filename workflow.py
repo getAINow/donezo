@@ -3,8 +3,9 @@
 Definitions (workflows) and runs (workflow_runs). A run snapshots the steps at start, then runs
 each role as a fresh team session (team_role 'role') in the director's folder. A role ends its
 step with finish_step; the run advances when that role's turn ends (after_run), never mid-turn.
-A role may delegate to sub-agents (team.spawn_subagent): its step then spans several turns and
-waits while its sub-agents work or a message to it is still queued.
+A role is a sub-director: it only reads, delegates to sub-agents (team.spawn_subagent), reviews and
+merges. Its step spans several turns and waits while its sub-agents work or a message to it is
+still queued; finish_step needs at least one of them ended (_delegated).
 Like board.py, it never imports session_orchestrator at module level.
 """
 
@@ -146,8 +147,9 @@ BASICS = {
 
 
 def tool_list(kind, tools):
-    """A role's (kind 'role'), its sub-agent's or its verifier's allow list: the basics + the step's
-    tools, de-duplicated in order. Plain Bash = the full shell, so Bash(git *) is dropped."""
+    """A role's sub-agent's (kind 'subagent') or its verifier's allow list: the basics + the step's
+    tools, de-duplicated in order. Plain Bash = the full shell, so Bash(git *) is dropped.
+    The role itself runs with BASICS[ROLE] only: the step's tools are for its sub-agents."""
     out = list(dict.fromkeys([*BASICS[kind], *(t.strip() for t in tools)]))
     return [t for t in out if t != "Bash(git *)"] if "Bash" in out else out
 
@@ -270,10 +272,21 @@ def _step_msg(run, sess_name):
             f' If an earlier step\'s work is not good enough to build on, call instead: result="reject", '
             f'back_to="<earlier role, empty = {steps[i - 1]["role"]}>", report="<findings: what is wrong '
             f'and what it needs>".')
-    parts.append(f"\nYou may delegate hands-on work: spawn_subagent(from_role=\"{sess_name}\", ...). Then end "
-                 f"your turn and wait for the [SUB-AGENT PASSED] or [SUB-AGENT FAILED] message. Review a "
-                 f"passed branch's diff and merge it yourself into the current branch of this folder; "
-                 f"never push. Call finish_step only when nothing you delegated is still active.")
+    tools = f" Your sub-agents get these tools: {', '.join(s['tools'])}." if s["tools"] else ""
+    parts.append(
+        f"\n## How you work\nYou are a sub-director. You do no hands-on work yourself and you do not have "
+        f"the tools for it: you read files, run git, delegate and review.{tools}\n"
+        f"Split your job into units that can be verified on their own. For each unit call "
+        f"spawn_subagent(from_role=\"{sess_name}\", playbook=..., brief=..., done_when=...). The brief must "
+        f"stand on its own: the sub-agent cannot see this message. done_when is a check an independent "
+        f"verifier can observe.\n"
+        f"A sub-agent that only needs to read and report uses playbook \"investigate\". Work done only "
+        f"through MCP tools (for example on a remote service) makes no commit: say so in done_when.\n"
+        f"Then end your turn and wait for the [SUB-AGENT PASSED] or [SUB-AGENT FAILED] message. Review a "
+        f"passed branch's diff and merge it into the current branch of this folder; never push. A failed "
+        f"sub-agent means the brief or done_when was wrong: fix it before you spawn again.\n"
+        f"Build your report from your sub-agents' verified results. Call finish_step only when nothing "
+        f"you delegated is still active; it is refused until one of your sub-agents has passed or failed.")
     parts.append(f"\nWhen you finish, call exactly once:\nfinish_step(from_role=\"{sess_name}\", "
                  f"result=\"done\", report=\"<what you produced, where, and the evidence>\", "
                  f"workspace_id=\"{run['workspace_id']}\").{back}\nThen end your turn. Do not call send_signal.")
@@ -298,7 +311,7 @@ async def _start_step(run_id):
         effort = team.default_effort(WRITE_PLAYBOOK)
         sess, err = await team._spawn_session(name, director.get("cwd") or "", "", effort, director,
                                               run["workspace_id"], "", team.builder_model("", effort),
-                                              skill=s["playbook"], tools=tool_list(ROLE, s["tools"]))
+                                              skill=s["playbook"], tools=list(BASICS[ROLE]))
         if err:
             return _end(get_run(run_id), "stopped", f"could not start step {run['step'] + 1} ({s['role']}): {err}")
         team._set_team(sess["id"], director["id"], ROLE)
@@ -343,6 +356,12 @@ def _end(run, status, reason="", resume=None):
         team._enqueue(run["director_id"], "\n".join(lines), run["workspace_id"])
 
 
+def _delegated(session_id):
+    """A sub-agent of this role session ended passed or failed. Every step visit is a fresh session."""
+    return bool(team._row("SELECT 1 FROM subtasks WHERE director_id = ? AND kind = 'subagent' "
+                          "AND status IN ('passed', 'failed') LIMIT 1", (session_id,)))
+
+
 def finish_step(session_id, result, report, back_to=""):
     """Record the current role's result. The run advances when that role's turn ends."""
     run = role_run(session_id)
@@ -351,6 +370,10 @@ def finish_step(session_id, result, report, back_to=""):
     if team._active_count(session_id):
         return ("⛔ a sub-agent you delegated is still active — end your turn and wait for its "
                 "[SUB-AGENT PASSED]/[SUB-AGENT FAILED] message, or cancel_subagent it first.")
+    if not _delegated(session_id):
+        return ("⛔ you have not delegated any work yet: a role does no hands-on work itself. Split your "
+                "job, spawn_subagent each unit, end your turn and wait for its [SUB-AGENT PASSED]/"
+                "[SUB-AGENT FAILED] message, then finish_step. A cancelled sub-agent does not count.")
     result = str(result or "").strip().lower()
     if result not in ("done", "reject"):
         return "⛔ result must be done or reject."

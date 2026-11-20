@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Guards for a workflow step's tool limit: a role, its sub-agents and their verifiers run with only
-the tools the step lists plus fixed basics (workflow.tool_list).
+"""Guards for a workflow step's tool limit: a role runs with only its fixed basics (read, git, delegate,
+finish); its sub-agents and their verifiers run with the tools the step lists plus their basics
+(workflow.tool_list).
 What can go wrong quietly:
-  - a role's first `claude -p` or a later run without the limit, so it can use any tool;
+  - a role's first `claude -p` or a later run without the limit, or with the step's tools, so it can
+    do the hands-on work itself;
   - a role's sub-agent or verifier (also one started after the step ended) not inheriting it;
   - a worktree session losing the director folder's MCP servers, or getting them through argv, a
     file others can read, or a file inside the repo;
@@ -103,7 +105,6 @@ so.register_session("dir-2", "plainlead", cwd=str(PLAIN), model="", permission_m
 
 # ── The fake claude CLI ───────────────────────────────────────────────────────
 CALLS = []                      # {argv, cwd, prompt, sid}
-DELEGATE = set()                # roles whose first turn spawns one feature sub-agent
 
 
 class FakeProc:
@@ -116,12 +117,8 @@ class FakeProc:
             a[a.index("--resume") + 1] if "--resume" in a else str(uuid.uuid4())
         CALLS.append({"argv": a, "cwd": str(self.cwd), "prompt": prompt, "sid": sid})
         if "[WORKFLOW STEP " in prompt:
-            role = prompt[prompt.index("[WORKFLOW STEP "):].split("]")[0].split(" · ")[-1]
-            if role in DELEGATE:
-                res = team.spawn_subagent(sid, "feature", "add feature.py", "feature.py exists")
-                assert res.get("id"), res
-            else:
-                workflow.finish_step(sid, "done", f"{role} report")
+            res = team.spawn_subagent(sid, "feature", "add feature.py", "feature.py exists")
+            assert res.get("id"), res
         elif "[SUB-AGENT PASSED]" in prompt or "[SUB-AGENT FAILED]" in prompt:
             workflow.finish_step(sid, "done", "merged")
         elif "[SUB-AGENT TASK " in prompt:
@@ -201,11 +198,10 @@ def subtask_of(role_sid):
     return team._row("SELECT * FROM subtasks WHERE director_id = ?", (role_sid,))
 
 
-async def run_wf(director, name, tools, delegate):
+async def run_wf(director, name, tools):
+    """One step; its role delegates one feature sub-agent, then finishes on [SUB-AGENT PASSED]."""
     steps = [{"role": f"{name}-r", "job": "do it", "playbook": "be good", "tools": tools}]
     assert workflow.define(WS, director, name, "test", steps).get("status"), name
-    if delegate:
-        DELEGATE.add(f"{name}-r")
     res = workflow.start(WS, director, name, "the job")
     assert res.get("id"), res
     await drain()
@@ -215,17 +211,22 @@ async def run_wf(director, name, tools, delegate):
 
 
 async def main():
-    # Step lists an MCP tool of the director folder's server and the full shell; the role delegates.
-    run = await run_wf("dir-1", "wa", ["mcp__demo__do_thing", "Bash"], True)
+    # Step lists Edit, an MCP tool of the director folder's server and the full shell: none of them
+    # reach the role (basics only, Bash(git *) not the full shell); all of them reach its sub-agent.
+    run = await run_wf("dir-1", "wa", ["Edit", "mcp__demo__do_thing", "Bash"])
     role = run["session_id"]
-    role_allowed = [t for t in ROLE_BASE if t != "Bash(git_*)"] + ["mcp__demo__do_thing", "Bash"]
-    limited("a) role", calls_of(role), role_allowed, ["Read", "Grep", "Glob", "Bash"], False)
+    limited("a) role: the role basics only, none of the step's tools", calls_of(role), ROLE_BASE,
+            ["Read", "Grep", "Glob", "Bash"], False)
+    task = next((c["prompt"] for c in calls_of(role) if "[WORKFLOW STEP " in c["prompt"]), "")
+    check("a) the role's task message names the tools its sub-agents get",
+          "Your sub-agents get these tools: Edit, mcp__demo__do_thing, Bash." in task, task[-1500:])
     st = subtask_of(role)
     limited("a) role's sub-agent", calls_of(st["session_id"]),
             ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "mcp__demo__do_thing"],
             ["Read", "Grep", "Glob", "Edit", "Write", "Bash"], True)
-    ver_allowed = ["Read", "Grep", "Glob", "Bash", "mcp__signal__submit_verdict", "mcp__demo__do_thing"]
-    limited("a) its verifier", calls_of(st["verifier_id"]), ver_allowed, ["Read", "Grep", "Glob", "Bash"], True)
+    ver_allowed = ["Read", "Grep", "Glob", "Bash", "mcp__signal__submit_verdict", "Edit", "mcp__demo__do_thing"]
+    limited("a) its verifier", calls_of(st["verifier_id"]), ver_allowed,
+            ["Read", "Grep", "Glob", "Bash", "Edit"], True)
     paths = {flag(c["argv"], "--mcp-config") for c in calls_of(st["session_id"]) + calls_of(st["verifier_id"])}
     ok = []
     for p in paths:
@@ -247,14 +248,14 @@ async def main():
           res.get("ok") and st2["verifier_id"] != st["verifier_id"] and st2["status"] == "passed",
           f"{res} {st2['status']}")
     limited("b) the later verifier", calls_of(st2["verifier_id"]), ver_allowed,
-            ["Read", "Grep", "Glob", "Bash"], True)
+            ["Read", "Grep", "Glob", "Bash", "Edit"], True)
 
     # tools: [] → exactly the role basics; Bash(git *), not the full shell.
-    run = await run_wf("dir-1", "wb", [], False)
+    run = await run_wf("dir-1", "wb", [])
     limited("c) role with no tools", calls_of(run["session_id"]), ROLE_BASE, ["Read", "Grep", "Glob", "Bash"], False)
 
     # A folder with no per-folder MCP server: no --mcp-config even when an MCP tool is listed.
-    run = await run_wf("dir-2", "wc", ["mcp__demo__do_thing"], True)
+    run = await run_wf("dir-2", "wc", ["mcp__demo__do_thing"])
     st = subtask_of(run["session_id"])
     limited("d) sub-agent, folder without servers", calls_of(st["session_id"]),
             ["Read", "Grep", "Glob", "Edit", "Write", "Bash(git_*)", "mcp__demo__do_thing"],
@@ -264,7 +265,6 @@ async def main():
             ["Read", "Grep", "Glob", "Bash"], False)
 
     # Ordinary director, its sub-agent and verifier: unchanged.
-    DELEGATE.clear()
     res = team.spawn_subagent("dir-1", "feature", "add feature.py", "feature.py exists")
     await drain()
     st = team.get_subtask(res["id"])

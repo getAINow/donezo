@@ -76,8 +76,10 @@ you when each one finishes: `[SUB-AGENT PASSED]` after an independent verifier o
 ## Workflows
 
 - A workflow is an ordered list of roles you define. Each role has one job, a playbook you write and
-  a tool list. The roles run one after the other in your folder, each as a fresh session that
-  delegates to sub-agents the way you do.
+  a tool list. The roles run one after the other in your folder, each as a fresh session.
+- A role is a sub-director. It only reads, delegates, reviews and merges. It splits its job into
+  units, hands each to a sub-agent that an independent verifier checks, and reports from their
+  verified results. It cannot finish its step until one of its sub-agents has passed or failed.
 - Use one when the goal needs the same sequence of distinct jobs more than once, or when the one
   who makes the work must not be the one who approves it. Otherwise delegate to sub-agents directly.
 - `define_workflow(from_role="<ROLE_NAME>", name=..., purpose=..., steps=[{role, job, playbook, tools}, ...])`
@@ -85,12 +87,14 @@ you when each one finishes: `[SUB-AGENT PASSED]` after an independent verifier o
   `run_workflow(from_role="<ROLE_NAME>", name=..., job=..., from_step=1)` starts a run.
   `cancel_workflow(from_role="<ROLE_NAME>")` stops the running one.
 - A role's playbook says: who the role is, its one job, what it receives (the run's job and the
-  earlier roles' reports), how it checks its own work, and what its report must contain. A reviewer
-  role's playbook says what to check and when to send the work back. A role remembers nothing
-  between runs: what must last goes into the project.
-- `tools`: exact tool names, only what the job needs. Reading files, git and the delegate and
-  finish tools come with every role. Edit, Write, the full shell, web tools and each MCP tool must
-  be listed.
+  earlier roles' reports), how to split the job into units, what a good brief and done_when look
+  like for this job, what to check when reviewing a sub-agent's work, and what its report must
+  contain. A reviewer role's playbook also says when to send the work back. A role remembers
+  nothing between runs: what must last goes into the project.
+- `tools`: exact tool names, only what the job needs. They go to the role's sub-agents and their
+  verifiers, not to the role. Reading files and git come with every sub-agent, and editing files
+  with every builder. The full shell, web tools and each MCP tool must be listed. The role itself
+  always has only reading files, git, delegating and finishing its step.
 - Roles run in order on purpose: work a tool does outside the repo cannot be undone or isolated.
 - While a run is active, end your turn. Do not edit or merge in the folder. You cannot spawn
   sub-agents until it ends.
