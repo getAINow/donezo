@@ -1590,6 +1590,7 @@ _COUNT_SQL = ("SELECT COUNT(*) total, "
               f"COALESCE(SUM(status = 'failed' AND {_ENDED} >= ?), 0) failed_24h, "
               f"COALESCE(SUM(attempts > 0 AND {_ENDED} >= ?), 0) sent_back_24h FROM subtasks WHERE ")
 FILTERS = ("active", "all", "failed")
+WF_STATUSES = ("all", "done", "stopped", "cancelled")
 
 
 def _ago(hours):
@@ -1665,7 +1666,7 @@ def overview(workspace_id, page=None):
         # Mốc giờ CỦA SERVER: mọi timestamp là giờ local không múi của server, trình duyệt ở múi
         # khác thì tự tính tuổi sẽ lệch đúng số giờ chênh — dashboard đo lệch theo mốc này.
         "now": so._now(),
-        "workflows": workflow.overview(workspace_id, sessions),
+        "workflows": workflow.overview(workspace_id, sessions, page and page["wf_status"]),
         "workflow_defs": workflow.definitions(workspace_id, sessions),
     }
 
@@ -1673,7 +1674,7 @@ def overview(workspace_id, page=None):
 def parse_page(params):
     """Query string → page cho overview(); không có tham số phân trang nào thì None (đường cũ).
     Giá trị hỏng thì về mặc định, không từ chối."""
-    keys = ("sub_limit", "sub_offset", "filter", "director_id", "dec_limit", "dec_offset")
+    keys = ("sub_limit", "sub_offset", "filter", "director_id", "dec_limit", "dec_offset", "wf_status")
     if not any(k in params for k in keys):
         return None
 
@@ -1685,7 +1686,8 @@ def parse_page(params):
     f = params.get("filter", "active")
     return {"sub_limit": num("sub_limit", 10, 1, 200), "sub_offset": num("sub_offset", 0, 0, 10**9),
             "dec_limit": num("dec_limit", 10, 1, 200), "dec_offset": num("dec_offset", 0, 0, 10**9),
-            "filter": f if f in FILTERS else "active", "director_id": params.get("director_id", "")}
+            "filter": f if f in FILTERS else "active", "director_id": params.get("director_id", ""),
+            "wf_status": params["wf_status"] if params.get("wf_status") in WF_STATUSES else "all"}
 
 
 def director_view(director_id, limit=12):

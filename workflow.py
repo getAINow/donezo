@@ -474,24 +474,43 @@ def cancel_by_user(run_id):
     return res
 
 
-def overview(workspace_id, sessions):
-    """The Team tab's workflow runs: every running one and the 5 latest ended, steps in order with the
-    role's job, a state and its report. Playbooks are never sent."""
+def _role_sessions(run, sessions):
+    """{role: id} of each role's LATEST session in this run (names are sub-<run id>-<n>-<role>; a retried
+    or revisited role has several). A removed session is simply absent."""
+    pre, best = f"sub-{run['id'][3:]}-", {}
+    for s in sessions.values():
+        n, _, role = s["name"][len(pre):].partition("-") if s["name"].startswith(pre) else ("", "", "")
+        if n.isdigit() and role and int(n) > best.get(role, (0,))[0]:
+            best[role] = (int(n), s["id"])
+    return {role: v[1] for role, v in best.items()}
+
+
+def overview(workspace_id, sessions, status=None):
+    """The Team tab's workflow runs: every running one plus the latest ended ones, steps in order with the
+    role's job, a state, its report and its latest session id. Playbooks are never sent.
+    status None = the 5 latest ended; done|stopped|cancelled = the 10 latest of it; all = the 10 latest."""
+    where, args, lim = "status != 'running'", [workspace_id], 5
+    if status is not None:
+        lim = 10
+        if status in ("done", "stopped", "cancelled"):
+            where, args = "status = ?", [workspace_id, status]
     rows = team._rows("SELECT * FROM workflow_runs WHERE workspace_id = ? AND status = 'running' "
                       "ORDER BY created_at DESC", (workspace_id,)) + team._rows(
-        "SELECT * FROM workflow_runs WHERE workspace_id = ? AND status != 'running' "
-        "ORDER BY ended_at DESC, rowid DESC LIMIT 5", (workspace_id,))
+        f"SELECT * FROM workflow_runs WHERE workspace_id = ? AND {where} "
+        "ORDER BY ended_at DESC, rowid DESC LIMIT ?", (*args, lim))
     out = []
     for run in map(_load_run, rows):
         def state(i):
             if run["status"] == "done" or i < run["step"]:
                 return "done"
             return ("current" if run["status"] == "running" else "stopped") if i == run["step"] else "pending"
+        sess = _role_sessions(run, sessions)
         out.append({
             **{k: run[k] for k in ("id", "name", "job", "status", "reason", "created_at", "ended_at")},
             "director_name": (sessions.get(run["director_id"]) or {}).get("name", ""),
             "steps": [{"role": s["role"], "job": s["job"], "state": state(i),
-                       "report": run["reports"].get(s["role"], "")} for i, s in enumerate(run["steps"])]})
+                       "report": run["reports"].get(s["role"], ""),
+                       "session_id": sess.get(s["role"], "")} for i, s in enumerate(run["steps"])]})
     return out
 
 

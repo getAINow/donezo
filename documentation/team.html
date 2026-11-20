@@ -172,8 +172,12 @@ order, each with its job and the tools its sub-agents get. A role with no extra 
 <span class="ui">Playbook</span> on a role to read its instructions. A workflow with a run in progress is marked
 running. You cannot edit or run a workflow from here.</p>
 <p>When there is at least one run, the section also shows, above the sub-agent
-board, every running run and the five that ended last. Each run shows its name, its job, its status and its director.
-The steps are listed in order, and the current one is highlighted. A step that has a report opens to show it. A stopped
+board, every running run plus the ended runs of the status chosen in the <span class="ui">Runs</span> filter
+(<span class="ui">Done</span> by default, or <span class="ui">All</span>, <span class="ui">Stopped</span>,
+<span class="ui">Cancelled</span>; the ten latest of it). A running run is always shown first. When no run has the chosen
+status, the list says so. Each run shows its name, its job, its status and its director.
+The steps are listed in order, and the current one is highlighted. A step that has a report opens to show it. A step that has started has a <span class="ui">Run</span> button that
+opens the run drawer with that role's latest run: live while it works, the finished transcript after it ended. A stopped
 run shows why it stopped. A sub-agent card that a role delegated shows the role's name where other cards show the director.</p>
 <p><span class="ui">Stop</span> on a running run asks for confirmation, then kills the running role and ends the run.
 The director is told once, and does not need to answer.</p>
