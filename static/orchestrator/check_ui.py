@@ -618,6 +618,8 @@ d = fn("wfDefCard")
 if 'id="team-wf-defs"' not in HTML or "data-st=" not in d or "<details" not in d or "button" in d \
         or "only the basics" not in d or "wfPlaybook" not in d or "WF_PB" not in d:
     gaps.add("wfDefCard needs #team-wf-defs, data-st, a playbook details, the only-the-basics wording and no buttons")
+if not re.search(r"<details><summary>Tools \(\$\{p\.tools\.length\}\)</summary><div class=\"chips\">\$\{p\.tools\.map", d):
+    gaps.add("wfDefCard must keep the tool chips inside a closed Tools details")
 for field in ("p.role", "p.job", "t)", "d.name", "d.purpose", "d.director_name"):
     if f"esc({field}" not in d and f"esc({field[:-1]})" not in d:
         gaps.add(f"wfDefCard must escape {field}")
