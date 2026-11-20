@@ -4582,8 +4582,8 @@ const wfKey = (d) => d.director_id + "/" + d.name + "@" + d.updated_at;
 function wfDefCard(d) {
   const steps = d.steps.map((p, k) => `<li class="wf-step"><b data-n="${k + 1}">${esc(p.role)}</b>
       <span class="hint">${esc(p.job)}</span>
-      <div class="chips">${p.tools.length ? p.tools.map((t) => `<span class="chip" title="${esc(t)}">${esc(t)}</span>`).join("")
-        : `<span class="hint">only the basics</span>`}</div>
+      ${p.tools.length ? `<details><summary>Tools (${p.tools.length})</summary><div class="chips">${p.tools.map((t) => `<span class="chip" title="${esc(t)}">${esc(t)}</span>`).join("")}</div></details>`
+        : `<div class="chips"><span class="hint">only the basics</span></div>`}
       <details data-k="${k}" ontoggle="wfPlaybook(this)"><summary>Playbook</summary>
         <pre>${esc((WF_PB[wfKey(d)] || [])[k] ?? "Loading…")}</pre></details></li>`).join("");
   return `<article class="st-card wf-def" data-st="${esc("def:" + d.director_id + "/" + d.name)}"
