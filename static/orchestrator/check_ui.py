@@ -612,6 +612,10 @@ if '$("team-wf").hidden = !wf.length && !defs.length' not in fn("teamRender") \
 if 'r.status === "running" ?' not in fn("wfCard") or "teamWfStop(" not in fn("wfCard") \
         or 'data-st="${esc(r.id)}"' not in fn("wfCard") or "<details>" not in fn("wfCard"):
     gaps.add("wfCard needs data-st, a details per step report and a Stop button only for a running run")
+if not re.search(r'<details class="wf-job">.*?\$\{esc\(r\.job\)\}.*?</details>', fn("wfCard")) \
+        or re.search(r'</details>[^`]*\$\{esc\(r\.job\)\}', fn("wfCard")) \
+        or "-webkit-line-clamp: 2" not in HTML:
+    gaps.add("wfCard must fold the run's job in a details (two-line summary); never print it in full outside one")
 # Saved workflows are read-only and untrusted text: every agent-written field goes through esc, the
 # playbook loads on first open into a cache that survives the rebuild, and no run/edit/delete control.
 d = fn("wfDefCard")

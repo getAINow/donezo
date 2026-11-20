@@ -4566,7 +4566,7 @@ function wfCard(r, i) {
   return `<article class="st-card wf-${esc(r.status)}" data-st="${esc(r.id)}">
     <div class="st-top">${badge(esc(r.status), WF_BADGE[r.status])}<span class="st-chip">${esc(r.name)}</span>
       ${r.director_name ? `<span class="st-who" title="Director">${esc(r.director_name)}</span>` : ""}</div>
-    <div class="st-title">${esc(r.job)}</div>
+    <details class="wf-job"><summary><span class="st-title">${esc(r.job)}</span></summary><pre>${esc(r.job)}</pre></details>
     ${r.reason ? `<div class="st-box ${r.status === "stopped" ? "bad" : ""}"><div>${r.status === "stopped" ? "Stopped" : "Reason"}</div><p>${esc(r.reason)}</p></div>` : ""}
     <ol class="wf-steps">${steps}</ol>
     <div class="st-meta"><span class="st-age" data-since="${esc(since)}"${r.status === "running" ? "" : ` data-ago="1"`}>${
