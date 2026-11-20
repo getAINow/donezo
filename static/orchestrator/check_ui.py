@@ -612,6 +612,9 @@ if '$("team-wf").hidden = !wf.length && !defs.length' not in fn("teamRender") \
 if 'r.status === "running" ?' not in fn("wfCard") or "teamWfStop(" not in fn("wfCard") \
         or 'data-st="${esc(r.id)}"' not in fn("wfCard") or "<details>" not in fn("wfCard"):
     gaps.add("wfCard needs data-st, a details per step report and a Stop button only for a running run")
+if 'id="wf-filter"' not in HTML or "wf_status" not in fn("teamUrl") or "teamWfRun(" not in fn("wfCard") \
+        or "session_id" not in fn("wfCard") or "wfEmpty(" not in fn("teamRender"):
+    gaps.add("the run cards need the #wf-filter select (sent as wf_status), a Run button per started step and the empty line")
 if not re.search(r'<details class="wf-job">.*?\$\{esc\(r\.job\)\}.*?</details>', fn("wfCard")) \
         or re.search(r'</details>[^`]*\$\{esc\(r\.job\)\}', fn("wfCard")) \
         or "-webkit-line-clamp: 2" not in HTML:

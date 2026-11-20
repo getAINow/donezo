@@ -4386,7 +4386,7 @@ const TEAM_MORE = { subtasks: "team-board-more", decisions: "team-dec-more" };
 function teamUrl(p) {
   const dir = $("team-dir").hidden ? "" : $("team-dir").value;
   return "/api/team?" + new URLSearchParams({ ...(currentWS ? { workspace_id: currentWS } : {}),
-    filter: $("team-filter").value, director_id: dir, ...p });
+    filter: $("team-filter").value, director_id: dir, wf_status: $("wf-filter").value, ...p });
 }
 
 // Refresh nạp lại từ đầu ĐÚNG số đã hiện (làm tròn lên 10): card cập nhật tại chỗ, không co về 10
@@ -4403,6 +4403,7 @@ async function teamLoad(reset) {
   teamRender();
 }
 
+window.teamLoad = teamLoad;
 function teamReset() { teamGen++; $("tab-team").scrollTop = 0; teamLoad(true); }
 window.teamReset = teamReset;
 
@@ -4486,7 +4487,7 @@ function teamRender() {
   const defs = TEAM.workflow_defs || [];
   $("team-wf").hidden = !wf.length && !defs.length;
   keepOpen($("team-wf-defs"), () => { $("team-wf-defs").innerHTML = defs.length ? `<div class="wf-sub">Defined</div>` + defs.map(wfDefCard).join("") : ""; });
-  keepOpen($("team-wf-runs"), () => { $("team-wf-runs").innerHTML = wf.map(wfCard).join(""); });
+  keepOpen($("team-wf-runs"), () => { $("team-wf-runs").innerHTML = wf.map(wfCard).join("") + wfEmpty(wf); });
 
   keepOpen($("team-decisions"), () => {
     $("team-decisions").innerHTML = TEAM.decisions.map((d) => `<li data-st="d${d.id}">
@@ -4600,11 +4601,18 @@ function stCard(s, i, sc = "t") {
 // A workflow run: name, job, status, director, its steps in order (the current one highlighted; a step
 // with a report opens to show it) and, while it runs, a Stop button.
 const WF_BADGE = { running: "b-blue", done: "b-green", stopped: "b-red", cancelled: "b-gray" };
+// A chosen status with no run of its own says so (a running run is always listed above and does not count).
+function wfEmpty(wf) {
+  const v = $("wf-filter").value;
+  return (v === "all" ? wf.length : wf.some((r) => r.status === v)) ? ""
+    : `<div class="hint wf-none">No ${v === "all" ? "" : esc(v) + " "}runs</div>`;
+}
 function wfCard(r, i) {
   const steps = r.steps.map((p, k) => {
     const head = `<span class="wf-head"><b>${esc(p.role)}</b><span class="hint">${esc(p.job)}</span></span>`;
     return `<li class="wf-step s-${esc(p.state)}"${p.state === "current" ? ` aria-current="step"` : ""}>${
-      p.report ? `<details><summary>${head}</summary><pre>${esc(p.report)}</pre></details>` : `<div>${head}</div>`}</li>`;
+      p.report ? `<details><summary>${head}</summary><pre>${esc(p.report)}</pre></details>` : `<div>${head}</div>`}${
+      p.session_id ? `<div class="st-acts"><button class="st-sec" onclick="teamWfRun(${i}, ${k})" title="Open this role's latest run">Run</button></div>` : ""}</li>`;
   }).join("");
   const since = r.status === "running" ? r.created_at : r.ended_at || r.created_at;
   return `<article class="st-card wf-${esc(r.status)}" data-st="${esc(r.id)}">
@@ -4656,6 +4664,12 @@ function teamWfStop(i) {
     teamDo(`/api/workflows/runs/${encodeURIComponent(r.id)}/cancel`);
 }
 window.teamWfStop = teamWfStop;
+
+function teamWfRun(i, k) {
+  const p = ((TEAM.workflows || [])[i] || {}).steps?.[k];
+  if (p && p.session_id) openSessionRun(p.session_id);
+}
+window.teamWfRun = teamWfRun;
 
 function diffHtml(text) {
   return String(text || "").split("\n").map((l) => {

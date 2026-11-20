@@ -793,6 +793,40 @@ async def main():
     check("j) a run in another workspace is not listed",
           (await api.get("/api/team", params={"workspace_id": "ws_other"})).json()["workflows"] == [])
 
+    # status filter: the 3 done runs must show even when 12 newer cancelled ones exist; a retried role opens its latest session
+    team._exec("DELETE FROM workflow_runs WHERE id LIKE 'wf_old%'")
+    for i in range(3):
+        seed(f"wf_done000{i}", "peer-1", "done", 2, {}, "", f"2026-01-03T0{i}:00:00")
+    for i in range(12):
+        seed(f"wf_canc00{i:02}", "peer-1", "cancelled", 1, {}, "", f"2026-01-04T{i:02}:00:00")
+    for n, role in ((1, "w1"), (2, "w1"), (3, "w2")):
+        so.register_session(f"rs-{n}", f"sub-done0000-{n}-{role}", cwd=str(REPO), model="", workspace_id=WS)
+    so.register_session("rs-x", "sub-done0000-9-w3", cwd=str(REPO), model="", workspace_id="ws_other")
+
+    async def runs(status):
+        p = {"workspace_id": WS, **({"wf_status": status} if status else {})}
+        return (await api.get("/api/team", params=p)).json()["workflows"]
+    ids = lambda rs, st: [r["id"] for r in rs if r["status"] == st]  # noqa: E731
+    d = await runs("done")
+    check("j) filter done: the running run first, then the 3 done runs, nothing else",
+          [r["status"] for r in d] == ["running"] + ["done"] * 3 and set(ids(d, "done")) == {f"wf_done000{i}" for i in range(3)},
+          [(r["id"], r["status"]) for r in d])
+    c = await runs("cancelled")
+    check("j) filter cancelled: at most 10, the latest first, plus the running one",
+          ids(c, "cancelled") == [f"wf_canc00{i:02}" for i in range(11, 1, -1)] and c[0]["status"] == "running"
+          and len(c) == 11, ids(c, "cancelled"))
+    check("j) filter stopped: the stopped run", ids(await runs("stopped"), "stopped") == ["wf_run00002"])
+    a = await runs("all")
+    check("j) filter all is bounded to 10 ended runs", len([r for r in a if r["status"] != "running"]) == 10, len(a))
+    check("j) filter junk = all; no filter = the 5 latest ended",
+          len(await runs("nope")) == len(a) and len([r for r in await runs(None) if r["status"] != "running"]) == 5)
+    check("j) another workspace's runs never appear in a filter",
+          (await api.get("/api/team", params={"workspace_id": "ws_other", "wf_status": "done"})).json()["workflows"] == [])
+    steps = {r["id"]: r["steps"] for r in d}["wf_done0000"]
+    check("j) a step carries its role's LATEST session id; a step that never ran carries none",
+          [x["session_id"] for x in steps] == ["rs-2", "rs-3", ""], [x["session_id"] for x in steps])
+    team._exec("DELETE FROM workflow_runs WHERE id LIKE 'wf_done%' OR id LIKE 'wf_canc%'")
+
     before = len(to_director())
     r = await api.post("/api/workflows/runs/wf_run00001/cancel")
     msgs = to_director()[before:]
