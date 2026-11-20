@@ -141,13 +141,17 @@ Scrolling loads more, 10 at a time.</p>
 <span class="ui">Whole team &amp; settings</span> leads here.</p>
 
 <h2 id="workflows">Workflows</h2>
-<p>A workflow is an ordered list of roles. Each role has one job, its own instructions and a list of tools it may use.
+<p>A workflow is an ordered list of roles. Each role has one job, its own instructions and a list of tools for its sub-agents.
 Use one when the same sequence of jobs comes back again and again, or when the one who makes the work should not be
 the one who approves it. Your director creates a workflow when you ask for one. You do not write it yourself.</p>
 <ul>
   <li><strong>A run.</strong> The director starts a run with a job. The roles run one after the other, in the director's folder.
-    Each role is a fresh session that gets the job and the reports of the roles before it. It may delegate hands-on work to
-    its own sub-agents, then ends its step with a report. The director is messaged once, when the run is done or stopped.</li>
+    Each role is a fresh session that gets the job and the reports of the roles before it. The director is messaged once,
+    when the run is done or stopped.</li>
+  <li><strong>A role delegates.</strong> A role does no hands-on work itself. It splits its job into units and hands each
+    one to a sub-agent, and an independent verifier checks each one. The role reads, reviews what passed, merges it into
+    the folder and writes its report from the verified results. It cannot end its step before at least one of its
+    sub-agents has passed or failed.</li>
   <li><strong>One at a time.</strong> A director has one run at a time. While it runs, the director waits: it does not
     edit or merge in the folder and cannot delegate to sub-agents of its own.</li>
   <li><strong>Sent back.</strong> A role that reviews the work can send it back to an earlier role with its findings.
@@ -157,12 +161,14 @@ the one who approves it. Your director creates a workflow when you ask for one. 
   <li><strong>Resume.</strong> A stopped run is not lost. The director fixes the cause, for example a role's
     instructions, and starts again at the step that stopped. The reports of the earlier steps carry over.
     If the cause is unclear, it asks you first.</li>
-  <li><strong>Tool limit.</strong> A role can use only the tools listed for its step, plus reading files, git and
-    delegating. Anything else, such as editing files or running shell commands, has to be listed for it.</li>
+  <li><strong>Tool limit.</strong> The tools listed for a step go to the role's sub-agents and their verifiers. They can
+    use only those tools, plus reading files and git, and a sub-agent can also edit files. Anything else, such as running
+    shell commands or a service's tools, has to be listed. The role itself only reads files, uses git, delegates and
+    reviews.</li>
 </ul>
 <p>Saved workflows appear on the Team tab as soon as the director creates them. The <span class="ui">Workflows</span>
 section lists each one under <span class="ui">Defined</span> with its purpose and director. Its roles are numbered in
-order, each with its job and its tools. A role with no extra tools says it has only the basics. Open
+order, each with its job and the tools its sub-agents get. A role with no extra tools says it has only the basics. Open
 <span class="ui">Playbook</span> on a role to read its instructions. A workflow with a run in progress is marked
 running. You cannot edit or run a workflow from here.</p>
 <p>When there is at least one run, the section also shows, above the sub-agent

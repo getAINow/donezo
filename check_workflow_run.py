@@ -9,7 +9,9 @@ What can go wrong quietly:
   - a role's SKILL folder showing in the user's git status or left behind;
   - a run hanging 'running' after a restart, a removed director or a denied task message;
   - a role that delegates: its step ending while a sub-agent still works, or its sub-agents
-    outliving the step; a director delegating into the folder its roles are merging in.
+    outliving the step; a director delegating into the folder its roles are merging in;
+  - a role finishing its step without having delegated (it must be a sub-director), or a retried
+    role inheriting its failed session's delegations; work with no commit refused.
 
     python3 check_workflow_run.py
 """
@@ -86,9 +88,20 @@ so.register_session("peer-1", "peer", cwd=str(REPO), model="", workspace_id=WS)
 # PLAN[role] = one entry per run of that role: "crash", or a list of finish_step calls
 # (result, back_to, report) — an empty list ends the turn without finish_step.
 # A callable entry runs first (inside the turn) and its return value is the calls list.
-# A sub-agent commits feature.py in its worktree; its verifier passes it. WAIT[subtask] = what the
-# run looked like while that sub-agent worked (its role's turn had already ended).
-PLAN, ROLE_RUNS, DURING, RESPONSES, ROLE_OF, WAIT = {}, [], {}, [], {}, {}
+# A sub-agent commits feature.py in its worktree (brief NOCOMMIT: no change, CRASH: its run fails;
+# investigate: reads only); its verifier passes it. WAIT[subtask] = what the run looked like while
+# that sub-agent worked (its role's turn had already ended).
+# Roles not in REAL test run order, not delegation: each of their sessions gets one passed sub-agent
+# row (stub_delegation) so finish_step accepts them. REAL roles delegate for real.
+PLAN, ROLE_RUNS, DURING, RESPONSES, ROLE_OF, WAIT, REAL = {}, [], {}, [], {}, {}, {"d1"}
+
+
+def stub_delegation(session_id):
+    if not team._row("SELECT 1 FROM subtasks WHERE director_id = ?", (session_id,)):
+        now = so._now()
+        team._exec("INSERT INTO subtasks (id, workspace_id, director_id, kind, playbook, status, created_at, "
+                   "updated_at) VALUES (?, ?, ?, 'subagent', 'investigate', 'passed', ?, ?)",
+                   (team._new_id(), WS, session_id, now, now))
 
 
 def _role_in(prompt):
@@ -125,6 +138,10 @@ async def fake_run(session, prompt, on_event=None, dry_run=False):
                           "status": git("status", "--porcelain", "--untracked-files=all", cwd=role.get("cwd", ".")),
                           "cwd": str(cwd), "common": git("rev-parse", "--path-format=absolute", "--git-common-dir",
                                                          cwd=cwd)}
+        if "CRASH" in st["brief"]:
+            return {"ok": False, "result": "CLI died", "session_id": session["id"], "tokens": 0, "raw": {}}
+        if st["playbook"] == "investigate" or "NOCOMMIT" in st["brief"]:
+            return _ok(session, "Done through the service; no file changed. Evidence: read it back.")
         (cwd / "feature.py").write_text(f"VALUE = '{st['id']}'\n", encoding="utf-8")
         git("add", "feature.py", cwd=cwd)
         git("commit", "-q", "-m", "feature", cwd=cwd)
@@ -137,6 +154,8 @@ async def fake_run(session, prompt, on_event=None, dry_run=False):
     DURING.setdefault(name, []).append((
         (cwd / ".claude" / "skills" / name / "SKILL.md").exists(),
         git("status", "--porcelain", "--untracked-files=all", cwd=cwd)))
+    if role not in REAL:
+        stub_delegation(session["id"])
     plan = PLAN.get(role, [[("done", "", f"{role} report")]])
     act = plan.pop(0) if len(plan) > 1 else plan[0]
     if callable(act):
@@ -234,6 +253,11 @@ async def main():
     p1, p2, p3 = (p for _, p in rr)
     check("a) step 1 has the run's job, its own job and the finish_step instruction",
           "make the happy thing" in p1 and "a1 job" in p1 and "happy purpose" in p1 and "finish_step(" in p1, p1)
+    check("a) the role is told it must delegate: sub-director, no hands-on work, spawn_subagent, investigate",
+          all(x in p1 for x in ("You are a sub-director", "You do no hands-on work yourself",
+                                "spawn_subagent(from_role=", '"investigate"', "[SUB-AGENT PASSED]",
+                                "never push", "brief or done_when was wrong", "refused until"))
+          and "may delegate" not in p1.lower() and "Your sub-agents get these tools" not in p1, p1)
     check("a) later roles see the earlier reports",
           "a1 report" in p2 and "a1 report" in p3 and "a2 report: built the thing" in p3, p3)
     check("a) list_workflows shows the running step", "step 2/3 (a2)" in (seen_list or [""])[0], seen_list)
@@ -558,6 +582,120 @@ async def main():
     workflow.reconcile()
     check("i) restart stops a run whose role has neither", latest()["status"] == "stopped", latest()["status"])
     await drain()
+
+    # ── l) a role is a sub-director: finish_step needs a delegation that ended ──
+    SPAWNED, FIN = [], {}
+
+    def deleg(playbook="feature", brief="add feature.py", fin=""):
+        """A role turn that spawns one sub-agent (after a finish_step recorded in FIN[fin] when fin)."""
+        async def turn(session):
+            if fin:
+                await finish_early(session, fin)
+            r = await signal_mcp.spawn_subagent(from_role=session["name"], playbook=playbook, brief=brief,
+                                                done_when="observed", workspace_id=WS)
+            SPAWNED.append(r.split()[1])
+            return []
+        return turn
+
+    async def finish_early(session, tag):
+        FIN[tag] = (await signal_mcp.finish_step(from_role=session["name"], result="done", report="early",
+                                                 workspace_id=WS), latest()["result"], latest()["step"])
+
+    async def merged(session):
+        """The turn on [SUB-AGENT PASSED/FAILED]: merge a passed branch, then finish."""
+        st = team.get_subtask(SPAWNED[-1])
+        if st["status"] == "passed" and st["branch"]:
+            git("merge", "--no-ff", "-q", "-m", "merge", st["branch"], cwd=session["cwd"])
+        return [("done", "", f"{ROLE_OF[session['name']]}: {st['id']} {st['status']}")]
+
+    async def l1_first(session):
+        await finish_early(session, "none")
+        r = await signal_mcp.spawn_subagent(from_role=session["name"], playbook="feature", brief="spare",
+                                            done_when="x", workspace_id=WS)
+        await signal_mcp.cancel_subagent(from_role=session["name"], subtask_id=r.split()[1], workspace_id=WS)
+        await finish_early(session, "cancelled")
+        await deleg()(session)
+        await finish_early(session, "active")
+        return []
+
+    def refused(tag, why):
+        r, rec, i = FIN.get(tag, ("", None, None))
+        check(f"l) finish_step {tag}: refused, the run unchanged", r.startswith("⛔") and why in r
+              and rec == {} and i == 0, FIN.get(tag))
+
+    REAL.update({"l1", "l2", "m1", "m2", "o1"})
+    await define("subdir", ["l1", "l2"])
+    PLAN["l1"] = [l1_first, merged, deleg(), merged]
+    PLAN["l2"] = [deleg("investigate", "read app.py and report"), [("reject", "l1", "FIND-L: l1 must redo it")],
+                  deleg("investigate", "read app.py again"), merged]
+    n_msgs, n_resp = len(wf_msgs()), len(RESPONSES)
+    await run("subdir", "sub-director job")
+    await drain()
+    wf, lr = latest(), runs_of("l")
+    refused("none", "not delegated")
+    refused("cancelled", "not delegated")
+    refused("active", "still active")
+    check("l) a reviewer that delegated an investigate sub-agent and rejected sends the run back to step 1",
+          [x[0] for x in lr] == ["l1", "l1", "l2", "l2"] * 2 and "FIND-L" in lr[4][1] and "FIND-L" not in lr[0][1],
+          [x[0] for x in lr])
+    sts = [team.get_subtask(x) for x in SPAWNED]
+    check("l) every unit was a real sub-agent that passed: feature, investigate, feature, investigate",
+          [(s["playbook"], s["status"]) for s in sts] == [("feature", "passed"), ("investigate", "passed")] * 2
+          and all(s["director_id"] != "dir-1" for s in sts), [(s["playbook"], s["status"]) for s in sts])
+    resp = [x for x in RESPONSES[n_resp:] if x[0] in ("l1", "l2")]
+    check("l) finish_step after a passed sub-agent is accepted (done and reject)",
+          [(x[0], x[1]) for x in resp] == [("l1", "done"), ("l2", "reject"), ("l1", "done"), ("l2", "done")]
+          and not any(x[3].startswith("⛔") for x in resp), resp)
+    msgs = wf_msgs()[n_msgs:]
+    check("l) the run ends done with one [WORKFLOW DONE]",
+          wf["status"] == "done" and len(msgs) == 1 and msgs[0].startswith("[WORKFLOW DONE]"), (wf["status"], msgs))
+
+    # No commit (work done only through MCP tools): it passes, the role is told, the run moves on.
+    await define("nocommit", ["m1", "m2"])
+    PLAN["m1"] = [deleg(brief="NOCOMMIT: change it on the service"), merged]
+    PLAN["m2"] = [deleg(), merged]
+    n_msgs, k = len(wf_msgs()), len(SPAWNED)
+    await run("nocommit", "no commit job")
+    await drain()
+    wf, mr = latest(), runs_of("m")
+    st, st2 = team.get_subtask(SPAWNED[k]), team.get_subtask(SPAWNED[k + 1])
+    check("l) a role's feature sub-agent with no commit passes on its verifier's word",
+          st["status"] == "passed" and st["worktree"] and st["head_sha"] == st["base_sha"],
+          (st["status"], st["head_sha"], st["base_sha"]))
+    check("l) …the role gets [SUB-AGENT PASSED] and its finish_step advances the run to step 2",
+          [x[0] for x in mr] == ["m1", "m1", "m2", "m2"] and f"[SUB-AGENT PASSED] {st['id']}" in mr[1][1]
+          and st2["status"] == "passed", [x[0] for x in mr])
+    msgs = wf_msgs()[n_msgs:]
+    check("l) two steps, each delegating one sub-agent that passed: done, one [WORKFLOW DONE], m2's work merged",
+          wf["status"] == "done" and len(msgs) == 1 and msgs[0].startswith("[WORKFLOW DONE]")
+          and st2["id"] in (REPO / "feature.py").read_text(encoding="utf-8"), (wf["status"], msgs))
+
+    # A role's own failure after it delegated: the retry is a fresh session that starts from zero.
+    await define("retry", ["o1", "o2"])
+    PLAN["o1"] = [deleg(), "crash", deleg(brief="CRASH: add feature.py", fin="retry"), merged]
+    n_resp, k = len(RESPONSES), len(SPAWNED)
+    await run("retry", "retry job")
+    await drain()
+    wf, o1 = latest(), [n for role, n, _ in ROLE_RUNS if role == "o1"]
+    st, st2 = team.get_subtask(SPAWNED[k]), team.get_subtask(SPAWNED[k + 1])
+    check("l) the first o1 session delegated one that passed, then failed on its own",
+          st["status"] == "passed" and len(o1) == 4 and len(set(o1)) == 2 and o1[0] == o1[1] != o1[2] == o1[3], o1)
+    check("l) the retried session's finish_step is refused until it delegates again",
+          FIN.get("retry", ("",))[0].startswith("⛔") and "not delegated" in FIN["retry"][0], FIN.get("retry"))
+    resp = [x for x in RESPONSES[n_resp:] if x[0] == "o1"]
+    check("l) finish_step after a failed sub-agent is accepted and the run goes on",
+          st2["status"] == "failed" and [(x[1], x[3][:4]) for x in resp] == [("done", "Step")]
+          and wf["status"] == "done" and runs_of("o")[-1][0] == "o2", (st2["status"], resp, wf["status"]))
+
+    # A director's own sub-agent with no commit: as before (not a workflow role).
+    n0 = len(to_director())
+    res = team.spawn_subagent("dir-1", "feature", "NOCOMMIT: change it on the service", "observed")
+    await drain()
+    st = team.get_subtask(res["id"])
+    check("l) a director's sub-agent with no commit passes and the director is told, as before",
+          st["status"] == "passed" and st["head_sha"] == st["base_sha"]
+          and any(m.startswith(f"[SUB-AGENT PASSED] {st['id']}") for m in to_director()[n0:]),
+          (st["status"], to_director()[n0:]))
 
     # ── h) director / role removed, task message denied, restart ────────────
     REPO2 = TMP / "repo2"
