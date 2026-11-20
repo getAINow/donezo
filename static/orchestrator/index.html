@@ -904,6 +904,7 @@
   .act-empty { padding: 40px 16px; text-align: center; color: var(--muted); }
   .act-empty b { display: block; color: var(--text); font-size: 14px; margin-bottom: 4px; }
   .modal.sg { width: min(520px, 100%); }
+  .pb-body p { margin: 8px 0 0; overflow-wrap: anywhere; }
   .sg-more { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
   .sg-more summary { cursor: pointer; }
   .form-card .sg-chk { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 12.5px;
@@ -1168,6 +1169,7 @@
   .insp-pair .num.warn { color: var(--amber); }
   .insp-pair .num.hit { color: var(--red); font-weight: 700; }
   .insp-row { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+  .insp-row + .insp-row { margin-top: 6px; }
   /* Danh sách phiên CLI để dọn dẹp: mỗi dòng một phiên, nút xoá riêng của dòng đó. */
   .sess-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-width: 0;
     border-bottom: 1px solid var(--border); }
@@ -1885,6 +1887,25 @@
     <div class="na-foot">
       <span class="spacer"></span>
       <button type="button" id="busy-ok" class="primary" onclick="busyClose()">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Update playbook: xem trước những gì đổi rồi mới ghi. Bấm nền đóng: không có chữ nào để mất. -->
+<div id="pb-modal" class="modal-overlay" hidden onclick="if (event.target === this) pbClose()">
+  <div class="modal form-card na sg" role="dialog" aria-modal="true" aria-labelledby="pb-title">
+    <h3 id="pb-title">Update playbook</h3>
+    <label for="pb-tpl">Template</label>
+    <select id="pb-tpl" onchange="pbPreview(this.value)">
+      <option value="director">director</option>
+      <option value="agent">agent</option>
+    </select>
+    <div id="pb-body" class="pb-body"></div>
+    <div id="pb-msg" class="form-msg"></div>
+    <div class="na-foot">
+      <span class="spacer"></span>
+      <button type="button" class="secondary" onclick="pbClose()">Cancel</button>
+      <button type="button" id="pb-ok" class="primary" onclick="pbApply()">Update</button>
     </div>
   </div>
 </div>

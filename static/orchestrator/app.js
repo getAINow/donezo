@@ -844,6 +844,47 @@ function busyOpen(busy, target) {
 function busyClose() { $("busy-modal").hidden = true; }
 window.busyClose = busyClose;
 
+// Update playbook: viết lại SKILL theo template HIỆN TẠI, giữ phần agent tự viết (xem
+// _merge_playbook). Mở = xem trước (không ghi gì); heading là chữ agent viết → luôn qua esc.
+let pbSid = null, pbName = "";
+async function pbOpen(id, name) {
+  pbSid = id; pbName = name;
+  $("pb-title").textContent = `Update playbook · ${name}`;
+  $("pb-modal").hidden = false;
+  const r = await pbPreview("director");
+  if (r && r.template_guess !== "director") await pbPreview(r.template_guess);
+}
+async function pbPreview(tpl) {
+  $("pb-tpl").value = tpl;
+  $("pb-ok").disabled = true;
+  $("pb-body").innerHTML = "";
+  $("pb-msg").textContent = "Reading…"; $("pb-msg").className = "form-msg";
+  try {
+    const r = await api(`/api/sessions/${pbSid}/playbook/update`, "POST", { template: tpl });
+    if (!r.changed) { showMsg("pb-msg", "Already up to date — nothing would change.", true); return r; }
+    const line = (k, label) => r.summary[k].length
+      ? `<p><b>${label}:</b> ${r.summary[k].map(esc).join(" · ")}</p>` : "";
+    $("pb-body").innerHTML = line("updated", "Updated from the template") + line("added", "Added")
+      + line("kept", "Kept as the agent wrote it")
+      + `<p class="hint">The previous version is saved as SKILL.md.bak. The change takes effect on the agent's next message.</p>`;
+    $("pb-msg").textContent = "";
+    $("pb-ok").disabled = false;
+    return r;
+  } catch (e) { console.error(e); showMsg("pb-msg", "Could not preview: " + e, false); }
+}
+async function pbApply() {
+  $("pb-ok").disabled = true;
+  try {
+    const r = await api(`/api/sessions/${pbSid}/playbook/update`, "POST",
+                        { template: $("pb-tpl").value, apply: true });
+    pbClose();
+    toast(r.changed ? "Playbook updated" : "Already up to date",
+          r.changed ? `${pbName}: takes effect on its next message` : `${pbName}: nothing changed`);
+  } catch (e) { console.error(e); showMsg("pb-msg", "Could not update: " + e, false); }
+}
+function pbClose() { $("pb-modal").hidden = true; }
+window.pbOpen = pbOpen; window.pbPreview = pbPreview; window.pbApply = pbApply; window.pbClose = pbClose;
+
 function closeWs(id) {
   OPEN = OPEN.filter((x) => x !== id);
   if (!OPEN.length) { ACTIVE = -1; SPLIT = false; }
@@ -2291,6 +2332,8 @@ ${inspTeamSec(s)}`,
         <button class="secondary" onclick="editSkill('${id}','${esc(s.name)}')"
           title="Edit this role's SKILL (upserts into .claude/skills in the project cwd)">${ic("book", "sm")} SKILL</button>
       </div>
+      ${s.team ? "" : `<div class="insp-row"><button class="secondary" onclick="pbOpen('${id}','${esc(s.name)}')"
+          title="Rewrite this playbook from the current role template, keeping what the agent wrote">${ic("refresh", "sm")} Update playbook</button></div>`}
     </div>`,
     settings: () => `
     ${wsMove(s)}
@@ -3370,6 +3413,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("sg-modal").hidden) sigClose();
   if (e.key === "Escape" && !$("bd-modal").hidden) boardClose();
   if (e.key === "Escape" && !$("busy-modal").hidden) busyClose();
+  if (e.key === "Escape" && !$("pb-modal").hidden) pbClose();
 });
 
 // Nút trong danh sách: tên đi qua data-attribute, không qua inline onclick.

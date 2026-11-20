@@ -635,6 +635,24 @@ if "confirm(" not in fn("teamWfStop") or "/api/workflows/runs/" not in fn("teamW
 check("the Team tab shows workflow runs with a confirmed Stop", gaps,
       "runs hidden when none, steps in order, a report opens, Stop only while running")
 
+# Update playbook: headings come from the agent's own SKILL (untrusted) and the action must not
+# exist for team sessions, whose playbooks are generated.
+gaps = set()
+if 'id="pb-modal" class="modal-overlay"' not in HTML or 'id="pb-tpl"' not in HTML \
+        or '!$("pb-modal").hidden) pbClose()' not in JS:
+    gaps.add("#pb-modal must use the modal-overlay pattern with a template select and close on Escape")
+if not re.search(r"\$\{s\.team \? \"\" : `[^`]*pbOpen\([^`]*Update playbook[^`]*`\}", JS):
+    gaps.add("the inspector's Update playbook button must be hidden for team sessions")
+pv = JS[JS.find("async function pbPreview("):JS.find("async function pbApply(")]
+ap = JS[JS.find("async function pbApply("):JS.find("function pbClose(")]
+if ".map(esc)" not in pv or "/playbook/update" not in pv \
+        or "Already up to date" not in pv or "SKILL.md.bak" not in pv:
+    gaps.add("pbPreview must escape every heading, say when nothing changes and name the .bak")
+if "apply: true" not in ap or "toast(" not in ap:
+    gaps.add("pbApply must POST apply and confirm with a toast")
+check("Update playbook previews, escapes headings and skips team sessions", gaps,
+      "preview first, esc on every heading, no button on sub-agents/verifiers")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)

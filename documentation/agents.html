@@ -129,6 +129,13 @@ it; the old name keeps working for agents that remember it.</p>
   <li><span class="ui">Work</span>: <span class="ui">Latest run</span>, and under <span class="ui">Context</span> the
     <span class="ui">View</span> and <span class="ui">SKILL</span> buttons. SKILL is the agent's playbook file, which you
     can edit here.</li>
+  <li><span class="ui">Update playbook</span> (also under <span class="ui">Context</span>): a playbook is copied from
+    its template once, when the agent is created, so sections the template gains later never reach it. This button
+    rewrites it from the current <span class="ui">director</span> or <span class="ui">agent</span> template; the
+    dialog guesses which one and lists the sections it will update, add and keep. The project details the agent
+    filled in and any section you added yourself are kept. The previous file is saved as <code>SKILL.md.bak</code>
+    beside it, and the agent uses the new playbook from its next message. Sub-agents and verifiers do not have
+    this button: their playbooks are written for each task.</li>
   <li><span class="ui">Settings</span>: move the agent to another workspace, list and delete old sessions in its folder,
     and <span class="ui">Unregister</span> it.</li>
 </ul>
