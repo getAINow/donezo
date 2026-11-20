@@ -757,6 +757,11 @@
   .wf-step.s-current b { color: var(--blue); }
   .wf-step.s-stopped { background: var(--red-soft); border-color: var(--red); }
   .wf-step.s-pending { color: var(--muted); }
+  .wf-job > summary { color: inherit; font-size: inherit; }
+  .wf-job > summary .st-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    overflow-wrap: anywhere; vertical-align: top; }
+  .wf-job[open] > summary .st-title { display: none; }
+  .wf-job[open] > summary::after { content: "Hide job"; color: var(--muted); font-size: 11.5px; }
   .wf-step pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11px; line-height: 1.5; max-height: 220px;
     overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 7px 9px; }
   .team-side { display: grid; gap: 16px; min-width: 0; }
