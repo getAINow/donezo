@@ -5516,7 +5516,7 @@ def build_app():
         # đóng gói vào binary — lỗi đó chỉ lộ ra khi user bấm 💻, quá muộn.
         _pty, _pty_why = pty_backend()
         return JSONResponse({"status": "ok", "server": "Session-Orchestrator",
-                             "dry_run": DRY_RUN,
+                             "dry_run": DRY_RUN, "now": _now(),
                              "embedded_terminal": _pty is not None,
                              "embedded_terminal_reason": _pty_why,
                              "default_effort": DEFAULT_EFFORT,

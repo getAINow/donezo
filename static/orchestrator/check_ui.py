@@ -353,7 +353,7 @@ gaps = set()
 row = re.search(r"(.{0,80})<button[^>]*/discard'\)\">Dismiss</button>", JS)
 if not row or "!t.worktree" not in row.group(1):
     gaps.add("the Home row's Dismiss must be guarded by !t.worktree")
-inbox = JS[JS.index("function homeInbox()"):][:400]
+inbox = JS[JS.index("function homeRows()"):][:400]
 if "t.rechecking" not in inbox:
     gaps.add("homeInbox must keep a row that is being rechecked")
 if '"Rechecking sub-agent"' not in JS or '"Reflect failed"' not in JS:
@@ -664,6 +664,26 @@ if "apply: true" not in ap or "toast(" not in ap:
     gaps.add("pbApply must POST apply and confirm with a toast")
 check("Update playbook previews, escapes headings and skips team sessions", gaps,
       "preview first, esc on every heading, no button on sub-agents/verifiers")
+
+# Needs you shows the server's calendar day by default; older rows sit behind a toggle that survives re-render.
+gaps = set()
+import subprocess
+fnjs = JS[JS.index("const isToday"):JS.index("let INBOX_OLDER")]
+js = fnjs + """const f = (a, b) => isToday(a, b);
+console.log(JSON.stringify([f("2026-11-23T00:10:00", "2026-11-23T08:00:00"), f("2026-11-22T23:50:00", "2026-11-23T00:05:00"),
+  f("2026-11-22T23:59:59", "2026-11-22T23:59:59"), f("2020-01-01T00:00:00", "")]));"""
+try:
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20, env={"TZ": "America/Los_Angeles", "PATH": __import__("os").environ.get("PATH", "")}).stdout.strip()
+    if out != "[true,false,true,true]":
+        gaps.add(f"isToday must compare the server's date prefix (got {out!r})")
+except FileNotFoundError:
+    pass   # no node: the structural checks below still run
+if "isToday(rowTime(r), HOME.now)" not in JS or "now: health.now" not in JS:
+    gaps.add("homeInbox must filter by the server's now from /health")
+if "INBOX_OLDER" not in JS.split("function renderInbox()")[1][:3000] or "toggleOlder" not in JS:
+    gaps.add("renderInbox must show Show older / Hide older from INBOX_OLDER")
+check("Needs you shows today by the server's clock, older rows behind a toggle", gaps,
+      "a week-old failure buries today's; a browser-clock day is wrong across zones")
 
 if fails:
     print("\n" + "\n\n".join(fails))
