@@ -302,6 +302,15 @@ if 'id="pal-btn"' not in HTML or 'onclick="palOpen()"' not in HTML:
 check("Ctrl+K opens the palette from anywhere, even a terminal", gaps,
       "xterm swallows keys, so the pane has to catch Ctrl+K before it and hand it to the shell")
 
+# 15b · homeInbox() có hàng {ws, n} (đề xuất chờ duyệt); palItems() không xử lý thì t undefined → TypeError,
+# palette trống khi có đề xuất.
+_pi = JS[JS.index("function palItems()"):][:900]
+gaps = set()
+if "({ ws, sg, t, n }) => n" not in _pi or 'openTeam(ws, "board")' not in _pi:
+    gaps.add("palItems must give the proposals row {ws, n} its own entry that opens the Board")
+check("the palette survives a waiting proposal", gaps,
+      "a row with no sg and no t crashes palRender and leaves the list empty")
+
 # 16 · Chip trên thanh cửa sổ đưa canvas tới card; tính năng ghim cửa sổ đã bỏ hẳn. Regex chỉ bắt tên
 # của tính năng đó: ghim HỘI THOẠI (resume_id, biến `pinned` trong danh sách phiên) dùng chữ khác.
 gaps = set(re.findall(r'pinWindow|unpinWindow|applyPin|pinnedNid|rzw|\.pinned\b|"pinned"', JS + HTML))

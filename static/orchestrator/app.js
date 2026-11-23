@@ -980,7 +980,10 @@ function palFocusAgent(s) {
 }
 
 function palItems() {
-  const need = homeInbox().map(({ ws, sg, t }) => sg
+  const need = homeInbox().map(({ ws, sg, t, n }) => n
+    ? { g: "Needs you", icon: "bell", lead: "need", label: `${n} proposal${n === 1 ? " waits" : "s wait"} for your decision`,
+        sub: "Ideas on the Board that no agent may start until you approve them", side: wsLabel(ws), run: () => openTeam(ws, "board") }
+    : sg
     ? { g: "Needs you", icon: "bell", lead: "need", label: `Approve ${nameOf(sg.from_session)} → ${nameOf(sg.to_session)}`,
         sub: sg.message, side: wsLabel(ws), run: () => act(`/api/signals/${sg.id}/approve`) }
     : { g: "Needs you", icon: t.status === "failed" ? "x" : "refresh", lead: t.status === "failed" ? "fail" : "need",
