@@ -531,11 +531,11 @@ function wsCardHtml(w) {
 }
 
 // Dữ liệu Home của MỌI workspace — refreshNow (shell) nạp, renderHome vẽ.
-let HOME = { sessions: [], signals: [], subtasks: [], proposed: {} };
+let HOME = { sessions: [], signals: [], subtasks: [], proposed: {}, now: "" };
 
 // Một danh sách cho cả hộp Needs you, badge sidebar và chữ "needs you" trên card: ba chỗ đếm
 // từ ba nguồn là sớm muộn lệch nhau.
-function homeInbox() {
+function homeRows() {
   return [
     ...waitingApproval(HOME.signals).map((sg) => ({ ws: sg.workspace_id, sg })),
     ...HOME.subtasks.filter((t) => !t.discarded && (t.status === "failed"
@@ -544,14 +544,29 @@ function homeInbox() {
   ];
 }
 
+// "Hôm nay" = ngày lịch của SERVER: timestamp là giờ local server không múi, nên so tiền tố ngày với
+// 'now' của server, không so với đồng hồ trình duyệt. Server cũ chưa có 'now' → coi mọi hàng là hôm nay.
+const isToday = (iso, now) => !now || (iso || "").slice(0, 10) === now.slice(0, 10);
+const rowTime = (r) => r.sg ? r.sg.created_at : r.t.ended_at || r.t.updated_at;
+let INBOX_OLDER = false;   // giữ khi render lại, mất khi tải lại trang
+
+// Mặc định chỉ hôm nay + hàng proposals (không có giờ); cũ hơn nằm sau "Show older".
+function homeInbox() { return homeRows().filter((r) => r.n || isToday(rowTime(r), HOME.now)); }
+function homeOlder() {
+  return homeRows().filter((r) => !r.n && !isToday(rowTime(r), HOME.now))
+    .sort((a, b) => (rowTime(b) || "").localeCompare(rowTime(a) || ""));
+}
+
 const inboxTitle = (t) => t.status !== "failed" ? "Rechecking sub-agent"
   : t.kind === "reflect" ? "Reflect failed" : "Sub-agent failed";
 
 const nameOf = (ref) => (HOME.sessions.find((x) => x.id === ref || x.name === ref) || {}).name || ref || "you";
 
+window.toggleOlder = () => { INBOX_OLDER = !INBOX_OLDER; renderInbox(); };
+
 function renderInbox() {
-  const items = homeInbox();
-  $("inbox").innerHTML = items.map(({ ws, sg, t, n }) => {
+  const items = homeInbox(), older = homeOlder();
+  const row = ({ ws, sg, t, n }) => {
     if (n) return `<div class="inbox-item" data-proposals="${esc(ws)}">${ic("bell")}
       <div class="inbox-txt"><div class="inbox-t">${n} proposal${n === 1 ? " waits" : "s wait"} for your decision</div>
         <div class="inbox-d"><span class="inbox-msg">Ideas on the Board that no agent may start until you approve them</span>
@@ -573,7 +588,11 @@ function renderInbox() {
       <div class="inbox-acts">${t.kind === "reflect" ? "" : `<button class="secondary" onclick="openTeam('${esc(ws)}')">Open in Team</button>`}${
         // Có worktree thì discard xoá cả nhánh: việc đó chỉ làm từ card, nơi có Diff để xem trước.
         failed && !t.worktree ? `<button class="secondary" onclick="act('/api/team/subtasks/${esc(t.id)}/discard')">Dismiss</button>` : ""}</div></div>`;
-  }).join("") || `<div class="inbox-calm">Nothing needs you right now.</div>`;
+  };
+  const shown = INBOX_OLDER ? [...items, ...older] : items;
+  $("inbox").innerHTML = (shown.map(row).join("") || `<div class="inbox-calm">Nothing needs you right now.</div>`)
+    + (older.length ? `<div class="more-row"><button class="more-btn" onclick="toggleOlder()">${
+      INBOX_OLDER ? "Hide older" : `Show older (${older.length})`}</button></div>` : "");
 
   const n = items.length;
   $("home-badge").hidden = !n;
@@ -4188,7 +4207,8 @@ async function refreshNow() {
       const subs = await Promise.all(teamWs.map((w) =>
         api("/api/team?workspace_id=" + encodeURIComponent(w))
           .then((t) => (t.subtasks || []).map((x) => ({ ...x, workspace_id: w }))).catch(() => [])));
-      HOME = { sessions: homeSessions, signals: homeSignals.items || [], subtasks: subs.flat(), proposed: homeProposed };
+      HOME = { sessions: homeSessions, signals: homeSignals.items || [], subtasks: subs.flat(), proposed: homeProposed, now: health.now || "" };
+      if (health.now) teamSkew = Date.now() - new Date(health.now).getTime();
       renderWorkspaces(workspaces);
       setConn(true);
       return;   // shell không đụng tới sessions/signals/runs — pane lo phần đó
