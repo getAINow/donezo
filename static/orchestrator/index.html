@@ -898,23 +898,16 @@
   .world { position: relative; flex: 1; min-height: 0; margin: 8px 12px 12px; }
   .node { position: absolute; inset: 0; display: flex; min-width: 0; visibility: hidden; }
   .node.shown { visibility: visible; }
-  .world.grid { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(0, 1fr); }
-  .world.grid[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .world.grid[data-n="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
-  .world.grid .node.shown { position: relative; inset: auto; }
   .node > .agent-card { flex: 1 1 0; min-width: 0; width: auto; display: flex; flex-direction: column; }
   .node .term-slot { height: auto; }
   .comps { flex: 1 1 0; min-width: 0; display: grid; }
   .comp { grid-area: 1 / 1; min-width: 0; min-height: 0; display: flex; }
   .comp:not(.on) { visibility: hidden; }
-  /* Grid không hiện companion: nó vẫn ở trong DOM (terminal editor sống), phủ lên ô, ẩn. */
-  .world.grid .comps { position: absolute; inset: 0; }
   .comp > .editor-card, .comp > .folder-card { flex: 1; width: auto; max-width: none; }
   .comp .editor-card .term-slot { flex: 1; height: auto; max-height: none; }
   .comp .folder-card .fld-body { flex: 1; height: auto; max-height: none; }
   .node.has-comp > .agent-card { border-top-right-radius: 0; border-bottom-right-radius: 0; }
   .node.has-comp .comp > * { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
-  .world.grid .node.has-comp > .agent-card { border-radius: var(--r-card); }
   .cv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-style: italic; pointer-events: none; }
   .cv-empty[hidden] { display: none; }
@@ -1001,7 +994,6 @@
   .agent-card:hover { box-shadow: var(--sh-3); }
   /* Đang chạy chỉ báo bằng chấm nhấp nháy; viền accent dành riêng cho card đang chọn. */
   .agent-card.st-paused, .agent-card.needs-you { border-color: var(--amber); }
-  .world.grid .node.sel .agent-card { border-color: var(--accent); box-shadow: var(--ring), var(--sh-2); }
   .agent-card.st-stopped { opacity: .68; }
   .node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 10px 12px 9px;
     user-select: none; border-bottom: 1px solid var(--border); }
@@ -1498,7 +1490,6 @@
       </div>
       <div class="ag-main">
         <div class="ag-bar">
-          <button id="ag-mode" class="secondary" onclick="toggleGrid()">Grid</button>
           <span class="spacer"></span>
           <button id="ag-side-btn" class="secondary" aria-controls="ag-side"
             onclick="document.getElementById('ag-side').classList.toggle('open')">Windows</button>
