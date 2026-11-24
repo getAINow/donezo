@@ -56,6 +56,21 @@ function toggleSidebar() {
 window.toggleSidebar = toggleSidebar;
 syncSidebarToggle();
 
+// Cột phải của tab Agents thu thành rail chấm trạng thái; class đặt từ localStorage ở script đầu index.html.
+// Terminal đang hiện tự fit lại qua ResizeObserver (scheduleFit), không cần gọi gì thêm.
+function syncSideToggle() {
+  const collapsed = document.documentElement.classList.contains("side-collapsed"), b = $("side-toggle");
+  const label = collapsed ? "Expand the window list" : "Collapse the window list";
+  b.title = label; b.setAttribute("aria-label", label); b.setAttribute("aria-expanded", !collapsed);
+}
+function toggleSide() {
+  const collapsed = document.documentElement.classList.toggle("side-collapsed");
+  try { localStorage.setItem("orch-side-collapsed", collapsed ? "1" : "0"); } catch { /* private mode */ }
+  syncSideToggle();
+}
+window.toggleSide = toggleSide;
+syncSideToggle();
+
 const SIGNAL_BADGE = { pending: "b-gray", approved: "b-blue", processing: "b-blue",
                        done: "b-green", failed: "b-red", denied: "b-red", blocked: "b-amber" };
 const RUN_BADGE = { ok: "b-green", error: "b-red", running: "b-blue" };
@@ -1138,7 +1153,8 @@ function renderWinList() {
     const extra = !s ? "" : (needs.has(s.id) ? `<span class="needs-badge" title="A message waits for your approval">needs you</span>` : "")
       + (s.term_queue ? `<span class="win-q" title="Signals waiting for the open terminal">${s.term_queue} message${s.term_queue > 1 ? "s" : ""} waiting</span>` : "");
     return `<button class="win-row${w.ed ? " ed" : ""}" data-nid="${esc(w.nid)}"
-      onclick="focusNode('${esc(w.nid)}')" title="${esc(w.kind)}${w.sub ? " · " + esc(w.sub) : ""}">
+      onclick="focusNode('${esc(w.nid)}')" title="${esc(w.name)} · ${esc(w.kind)}${w.sub ? " · " + esc(w.sub) : ""}"
+      ${s ? `aria-label="${esc(w.name)}${needs.has(s.id) ? ", needs you" : ""}"` : ""}>
       ${s ? `<span class="status-dot dot-${esc(s.status)}"></span>` : w.icon}
       <span class="win-name">${esc(w.name)}</span>${extra}</button>`;
   }).join("");
@@ -2105,7 +2121,6 @@ function renderInspector() {
   $("insp-name").title = s.name;
   $("insp-path").textContent = s.cwd || "no working folder";
   $("insp-path").title = s.cwd || "";
-  $("insp-msg").placeholder = `Message ${s.name}…`;
   for (const t of INSP_TABS) {
     $("insp-tab-" + t).classList.toggle("on", t === inspTabSel);
     $("insp-tab-" + t).setAttribute("aria-selected", t === inspTabSel);
@@ -2194,27 +2209,6 @@ ${inspTeamSec(s)}`,
   keepOpen($("insp-body"), () => { $("insp-body").innerHTML = tabs[inspTabSel](); });
 }
 
-// Composer cuối inspector: cùng API với form Send signal ở tab Activity, người gửi là người dùng.
-async function inspSend(e) {
-  e.preventDefault();
-  const s = (cvLast.sessions || []).find((x) => x.id === selSid);
-  const msg = $("insp-msg").value.trim();
-  if (!s || !msg) return;
-  $("insp-send").disabled = true;
-  try {
-    await api("/api/signals", "POST", { to_session: s.id, message: msg, from_role: "human",
-                                        workspace_id: currentWS || undefined });
-    $("insp-msg").value = "";
-    toast("Sent", `Message queued for ${s.name}.`);
-    await refreshAll();
-  } catch (err) {
-    let m = String(err);
-    try { const j = JSON.parse(err); if (j && j.error) m = j.error; } catch (_) { /* không phải JSON */ }
-    toast("Could not send", m);
-  } finally { $("insp-send").disabled = false; }
-}
-window.inspSend = inspSend;
-
 let cvRuns = [];      // trang đầu của audit log — "Working now" ở inspector đọc run đang chạy từ đây
 let cvLast = { sessions: [], signals: [] };  // data mới nhất (re-render cục bộ không cần fetch)
 
@@ -2298,8 +2292,6 @@ function sigMapSvg(sessions, edges, big) {
     <defs>${mk("run")}${mk("wait")}</defs>${lines}${dots}</svg>`;
 }
 
-const SIG_WORDS = { pending: "queued", approved: "approved, not delivered yet", processing: "in progress",
-                    done: "done", failed: "failed", denied: "denied", blocked: "blocked", expired: "expired" };
 let smKey = {};   // khung → chuỗi đã vẽ: giống thì không đụng DOM, hoạt ảnh mũi tên không chạy lại
 function smPut(id, html) { if (smKey[id] !== html) { smKey[id] = html; $(id).innerHTML = html; } }
 
@@ -2314,16 +2306,6 @@ function renderSigMap() {
   smPut("sig-map", sigMapSvg(sessions, edges, false) + `<span class="sm-cap${w ? " need" : ""}">${cap}</span>`);
   if ($("sm-modal").hidden) return;
   smPut("sm-big", sigMapSvg(sessions, edges, true));
-  const ref = (v) => { const s = sessions.find((x) => x.id === v || x.name === v);
-    return s ? `<button type="button" class="link sm-who" data-sid="${esc(s.id)}">${esc(s.name)}</button>`
-             : `<span class="sm-who">${esc(v || "you")}</span>`; };
-  const recent = [...signals].sort((a, b) => b.id - a.id).slice(0, 20);
-  smPut("sm-list", recent.length ? recent.map((sg) => {
-    const wait = sg.requires_approval && sg.status === "pending";
-    return `<li class="sm-row${wait ? " wait" : ""}">${ref(sg.from_session)} → ${ref(sg.to_session)}
-      <span class="sm-st">${wait ? "waiting for your approval" : esc(SIG_WORDS[sg.status] || sg.status)}</span>
-      <span class="sm-age" title="${esc(sg.created_at)}">${ago(sg.created_at)}</span></li>`;
-  }).join("") : `<li class="side-empty">No messages yet.</li>`);
 }
 
 function smOpen() {
@@ -2333,10 +2315,10 @@ function smOpen() {
 }
 function smClose(back = true) {
   $("sm-modal").hidden = true;
-  smKey["sm-big"] = smKey["sm-list"] = null;
+  smKey["sm-big"] = null;
   if (back) $("sig-map").focus();
 }
-// Dialog: bấm chấm hay tên agent = đóng rồi hiện cửa sổ agent đó; Tab quẩn trong dialog.
+// Dialog: bấm chấm agent = đóng rồi hiện cửa sổ agent đó; Tab quẩn trong dialog.
 function smModalEvent(e) {
   const t = e.target.closest("[data-sid]");
   if (e.type === "keydown" && e.key === "Tab") {
