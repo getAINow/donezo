@@ -3695,8 +3695,6 @@ function inspTeamSec(s) {
       <h4>Team <span class="hint" style="margin:0;text-transform:none;letter-spacing:0;font-weight:500">
         ${n ? `${n} active` : "nothing running"}</span></h4>
       <div id="insp-team-list" class="insp-team">${inspTeamHtml(s.id)}</div>
-      <button class="secondary" onclick="switchTab('team')" title="Every director in this workspace, plus team settings">
-        ${ic("rocket", "sm")} Whole team & settings</button>
     </div>`;
 }
 
