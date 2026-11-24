@@ -9,29 +9,36 @@ done until an independent verifier has seen it work.
 It drives the Claude Code and Antigravity (Gemini) CLIs you already have, so each provider keeps
 its own login and subscription.
 
-![Workspace canvas: the director, its agents, and what waits on you](documentation/images/canvas.png)
-
 [Download](../../releases) · [Report a bug](../../issues/new) · [Documentation](https://getainow.github.io/donezo/)
 
 ## How it works
 
-1. **Start a director** for a repo. It is the one agent you talk to.
+1. **Start a director** for a git repo (the New agent dialog can set one up). It is the one agent
+   you talk to.
 2. **It splits the work** and hands each unit to a sub-agent with
    `spawn_subagent(playbook, brief, done_when)`. Code is written in a worktree on branch
    `orch/<id>`; your checkout is never touched.
 3. **A fresh verifier checks `done_when`**: a command and its output, a flow in the running app.
    FAIL goes back to the builder with findings; PASS tells the director which branch to merge.
-4. **You step in only when needed.** Approvals, questions and failed checks land in one inbox.
+4. **You step in only when needed.** Approvals and failed checks land in one inbox.
+
+For a job you repeat, a director can also define a **workflow**: an ordered list of roles. Each
+role works like a director, handing its work to sub-agents that a verifier checks.
 
 ## Features
 
 **Agents**
-- Live terminal cards for Claude Code and Antigravity on one canvas, with model and reasoning
-  effort per agent. Gemini models are read from `agy models`, so new ones show up on their own.
+- Live terminals for Claude Code and Antigravity, with model and reasoning effort per agent.
+  Gemini models are read from `agy models`, so new ones show up on their own.
+- **Agents** tab: one agent's terminal fills the main area and a list on the right switches
+  between agents. Terminals that are not shown keep running. A signal map shows who is messaging
+  whom and what waits for your approval.
 - Agents hand work to each other with `send_signal`; every run is queued, capped and logged.
-- Role playbooks that fill themselves in from the project.
+- Role playbooks that fill themselves in from the project, and an Update playbook button that
+  refreshes one from the current template without losing your changes.
 - A VS Code style editor with Vim modes on every agent's project, with Source Control across all its git repos. Nothing to install.
-- Workspaces (isolated folders and agents) in groups, two side by side.
+  It and a folder browser open beside the agent's terminal, with a draggable divider.
+- Workspaces (isolated folders and agents) in groups. One shows at a time; Ctrl/⌘K opens any.
 - Guard rails: approval gate, ping-pong and daily caps, kill switch, one prompt at a time per
   agent, reachable from your own machine only by default.
 
@@ -40,17 +47,24 @@ its own login and subscription.
   `investigate` (read-only).
 - A verdict is tied to the commit that was checked; a verifier that edits files has its verdict
   thrown away. Repeated FAILs stop at a cap and tell the director.
+- **Workflows**: a director defines an ordered list of roles, each with one job and its own
+  playbook. A role does no hands-on work: it hands units to sub-agents, a verifier checks each,
+  and it merges what passed. A failed role is retried once, a role can send work back to an
+  earlier role once, and a stopped run resumes from any step.
 - **Team** tab: a pipeline board (Building → Verifying → Passed / Failed) with each sub-agent's
-  step, verdict and diff; the director's decision log; who may message whom; the effort each task ran at;
-  **Reflect**, which turns failed runs into a playbook change you approve.
-- Sub-agents and verifiers always run Claude Opus 5.5. A FAIL steps the builder's effort up one
-  level (to xhigh at most).
+  step, verdict and diff; the director's decision log; who may message whom; the model and effort each task ran at;
+  your workflows and their runs; **Reflect**, which turns failed runs into a playbook change you
+  approve.
+- Sub-agents run Claude Sonnet 5.5 or Opus 5.5, picked per task by the director (by default low
+  and medium effort run Sonnet, high and xhigh run Opus). Verifiers always run Opus 5.5. A FAIL
+  steps the builder's effort up one level (to xhigh at most).
 
 ![Team tab: sub-agents by stage and the director's decisions](documentation/images/team.png)
 
 **Staying in control**
-- **Home** inbox: every message waiting for approval, every question and every failed check
-  across workspaces, with Approve / Deny in place.
+- **Home** inbox: every message waiting for approval, every failed check and every waiting
+  proposal across workspaces, with Approve / Deny in place. Only today's items show; older ones are
+  behind Show older.
 - **Activity**: one timeline of messages and runs, with live transcripts.
 - **Ctrl/⌘K**: jump to any agent or workspace, or run any action.
 
