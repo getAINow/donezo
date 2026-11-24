@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agents · Donezo</title>
-<meta name="description" content="Workspaces, the canvas, terminal cards, models and effort, agent-to-agent handoffs, and the command palette.">
+<meta name="description" content="Workspaces, the Agents tab, terminal cards, models and effort, agent-to-agent handoffs, and the command palette.">
 <link rel="icon" href="images/logo.png">
 <link rel="stylesheet" href="style.css">
 <script src="site.js"></script>
@@ -71,23 +71,31 @@ you move one across. A <em>group</em> is only a label that keeps workspaces tidy
     Deleting a group only moves its workspaces back to the default group.</li>
 </ul>
 
-<h2 id="canvas">The canvas</h2>
-<p>The <span class="ui">Canvas</span> tab of a workspace shows every agent as a card.</p>
+<h2 id="agents-tab">The Agents tab</h2>
+<p>The <span class="ui">Agents</span> tab of a workspace shows one agent's card at full size, with a list of every
+window on the right.</p>
 <figure>
-  <img src="images/canvas.png" width="1440" height="900" alt="The canvas of the acme-shop workspace. A director card and a QA reviewer card sit in a shared frame with a dashed amber arrow between them. The director is selected and its panel is open on the right.">
-  <figcaption>Two agents in the same project folder share a frame. The dashed arrow is a queued message.</figcaption>
+  <img src="images/canvas.png" width="1440" height="900" alt="A workspace with two agents, a director and a QA reviewer, and the director's panel on the right.">
+  <figcaption>A workspace with its agents and the selected agent's panel.</figcaption>
 </figure>
 <ul>
-  <li><strong>Move around:</strong> drag the background to pan, and scroll to zoom. <kbd>Shift</kbd> + scroll zooms even
-    when the pointer is over a terminal.</li>
-  <li><strong>Arrange:</strong> drag a card's header to move it, and drag its bottom-right corner to resize it. Double-click that corner to reset the size. Drag a
-    folder frame's header to move the whole group.</li>
-  <li><strong>Jump to a card:</strong> the row above the canvas has one button per card; click it to jump there. The
-    <span class="ui">Fit every agent into view</span> button brings everything back.</li>
-  <li><strong>Read the arrows:</strong> they show messages in flight. Amber dashes mean <span class="ui">queued</span>,
-    moving dashes mean <span class="ui">working</span>. Finished ones disappear and stay in
-    <a href="control.html#activity">Activity</a>. The canvas help text calls that tab "History"; it is the same tab.</li>
+  <li><strong>Pick a window:</strong> the list on the right has a row for every agent, with its status dot,
+    <span class="ui">needs you</span> when a message waits for your approval, and how many messages wait for its
+    terminal. Click a row, or press <kbd>Tab</kbd> to reach it and <kbd>↵</kbd>, and that agent's card fills the main
+    area. A workspace with one agent shows it straight away. The choice is remembered for each workspace.</li>
+  <li><strong>Editor and folder:</strong> an open editor or folder card sits next to its agent's terminal, each about
+    half the width, and has its own row under the agent in the list. With both open, click a row to choose which
+    one shows. Close it and the terminal takes the full width again.</li>
+  <li><strong>Grid:</strong> the <span class="ui">Grid</span> button above the card shows up to four agents side by
+    side, the ones you picked most recently. Click a tile to select it; picking an agent that has no tile replaces
+    the one you picked longest ago. Editor and folder cards are not shown in Grid. <span class="ui">Focus</span>
+    goes back to one agent.</li>
+  <li><strong>Inspector:</strong> under the list is everything else about the selected agent: model, effort, limits,
+    its team and a box to message it.</li>
+  <li><strong>Small screens:</strong> below about 800 pixels the list and inspector open with the
+    <span class="ui">Windows</span> button, so the terminal keeps the whole width.</li>
 </ul>
+<p>Switching windows never restarts a terminal: every agent's terminal keeps running while another one is shown.</p>
 <p>Sub-agents and verifiers do not get cards. They appear in the director's panel and on the
 <a href="team.html#team-tab">Team tab</a>.</p>
 
@@ -101,7 +109,7 @@ session of this folder the card resumes. The strip on the left has:</p>
   <li>An editor button, which opens <a href="#editor">the editor</a> on this project
     (<span class="ui">Edit this project's files</span>).</li>
   <li>A folder button, which opens a card for browsing the project's files
-    (<span class="ui">Browse this project's folder on the canvas</span>).</li>
+    (<span class="ui">Browse this project's folder beside the terminal</span>).</li>
   <li>A dropdown for the CLI in this terminal, <code>claude</code> or <code>agy</code>. A CLI other than the agent's own
     opens a new session in the same folder.</li>
   <li>The reload button, which restarts the terminal.</li>

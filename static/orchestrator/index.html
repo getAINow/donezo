@@ -52,8 +52,6 @@
     --gray-soft: rgba(90,99,114,.12); --blue-soft: rgba(79,95,224,.12);
     --amber-soft: rgba(168,106,0,.12); --red-soft: rgba(200,64,45,.11);
     --green-soft: rgba(18,128,92,.12);
-    --edge-wait: #f5b94f; --edge-run: #4f5fe0;
-    --zone-line: #c3c9e8; --zone-fill: rgba(79,95,224,.045);
     --term-bg: #0b0d11; --scrim: rgba(18,22,30,.45);
     --ed-bg: #1f1f1f; --ed-fg: #cccccc; --ed-title: #ffffff;
     --sh-1: 0 1px 2px rgba(18,22,30,.06);
@@ -75,8 +73,6 @@
     --gray-soft: rgba(163,171,183,.12); --blue-soft: rgba(140,158,255,.14);
     --amber-soft: rgba(245,185,79,.14); --red-soft: rgba(255,138,120,.14);
     --green-soft: rgba(94,211,165,.13);
-    --edge-wait: #f5b94f; --edge-run: #8c9eff;
-    --zone-line: #313a52; --zone-fill: rgba(140,158,255,.05);
     --term-bg: #0b0d11; --scrim: rgba(0,0,0,.62);
     --sh-1: 0 1px 2px rgba(0,0,0,.5);
     --sh-2: 0 4px 14px rgba(0,0,0,.45);
@@ -209,6 +205,11 @@
     .sb-grp, #conn, #dry, .lbl, .x, .sb-new span, .sb-search .kbd) { display: none; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .ws-tab { padding-left: 16px; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .sb-tools { flex-direction: column; }
+  /* Điện thoại: rail 40px để terminal trong pane còn ≥360px. */
+  @media (max-width: 480px) {
+    :is(.narrow, .sb-collapsed) .sidebar { width: 40px; padding: 14px 4px; }
+    .narrow:not(.sb-collapsed) .sidebar:is(:hover, :has(:focus-visible)) { margin-right: -200px; }
+  }
 
   /* ── Controls ─────────────────────────────────────────────────────────── */
   button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel2);
@@ -570,28 +571,12 @@
   .sk-path { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; color: var(--faint); }
   .sk-path.on { color: var(--text); font-weight: 600; }
   .sk-path .mono { font-family: var(--mono); word-break: break-all; }
-  .win-bar { display: flex; align-items: center; gap: 6px; padding: 7px 20px; flex: none;
-    overflow-x: auto; scrollbar-width: thin; background: var(--bg);
-    border-bottom: 1px solid var(--border); }
-  .win-bar[hidden] { display: none; }
-  .win-chip { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
-    height: 28px; padding: 0 11px; font-size: 12px; color: var(--muted); background: var(--card);
-    border-radius: 999px; }
-  .win-chip:hover { color: var(--text); }
-  .win-chips { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .win-sep { flex: none; width: 1px; align-self: stretch; margin: 2px 3px; background: var(--border); }
-  /* Canvas vừa nhảy tới card khác → không nháy thì không biết cái nào vừa được tìm ra.
-     outline chứ không box-shadow: .node.sel đã dùng box-shadow, hai bên sẽ đè nhau. */
+  /* Cửa sổ vừa được "Show" → nháy viền một cái. outline chứ không box-shadow: .node.sel dùng box-shadow. */
   @keyframes node-found { from { outline-color: var(--accent); } to { outline-color: transparent; } }
-  .node.found { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-card);
+  .node.found { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-card);
     animation: node-found 1.4s ease-out forwards; }
-  .win-empty { font-size: 11.5px; color: var(--faint); white-space: nowrap; }
-  .win-empty .ic { vertical-align: -2px; }
-  /* Chip editor mang cùng màu cam với card của nó — hai chip cạnh nhau của CÙNG một session
-     (terminal + editor) trùng tên, màu là thứ duy nhất tách được chúng ra.
-     Đặt SAU .win-chip:hover: cùng specificity, thắng nhờ thứ tự. */
-  .win-chip.ed { color: var(--amber); }
-  .win-chip.ed:hover { color: var(--amber); background: var(--amber-soft); }
+  @media (prefers-reduced-motion: reduce) { .node.found { animation-timing-function: steps(1, end); } }
+  .win-empty { display: block; padding: 10px 12px; font-size: 11.5px; color: var(--faint); }
   .tabs { display: flex; gap: 2px; background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; padding: 3px; flex: none; }
   .tabs .tab { padding: 5px 14px; font-size: 13px; background: transparent; border: none;
@@ -901,52 +886,67 @@
     font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text); }
   .form-card .sg-chk input { width: auto; }
 
-  /* ── Canvas ───────────────────────────────────────────────────────────── */
-  .canvas { position: relative; flex: 1; min-width: 0; overflow: hidden; cursor: grab; touch-action: none;
-    background: radial-gradient(circle, var(--dot) 1px, transparent 1px) 0 0 / 22px 22px, var(--canvas); }
-  .canvas.grabbing { cursor: grabbing; }
-  .world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
-  .node { position: absolute; }
-  .cv-overlay { position: absolute; z-index: 3; }
-  .cv-toolbar { right: 14px; bottom: 14px; display: flex; align-items: center; gap: 2px;
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 3px;
-    box-shadow: var(--sh-2); }
-  .cv-toolbar .icon-btn { width: 30px; height: 30px; }
-  #cv-zoom { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 46px; text-align: center;
-    font-variant-numeric: tabular-nums; }
-  .cv-sep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
-  .cv-help { right: 14px; top: 14px; width: 30px; height: 30px; padding: 0; border-radius: 8px;
-    background: var(--card); border: 1px solid var(--border); color: var(--muted); box-shadow: var(--sh-2);
-    display: flex; align-items: center; justify-content: center; }
-  .cv-help:hover { color: var(--text); }
-  .cv-legend { right: 52px; top: 14px; display: flex; align-items: center; gap: 6px; height: 30px;
-    padding: 0 10px; font-size: 11.5px; color: var(--muted); background: var(--card);
-    border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--sh-2); pointer-events: none; }
-  .lg-run { width: 14px; height: 2px; background: var(--edge-run); }
-  .lg-wait { width: 14px; border-top: 2px dashed var(--edge-wait); margin-left: 8px; }
-  .cv-hint { right: 14px; top: 52px; max-width: 380px; background: var(--card);
-    border: 1px solid var(--border); border-radius: var(--r-card); padding: 12px 14px; font-size: 11.5px;
-    color: var(--muted); line-height: 1.75; box-shadow: var(--sh-3); }
-  .cv-hint b { color: var(--text); }
+  /* ── Agents: main area + right column (window list over the inspector) ── */
+  #tab-agents { position: relative; }
+  .ag-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--canvas); }
+  .ag-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; flex: none; }
+  .ag-bar button { height: 28px; padding: 0 12px; font-size: 12px; }
+  #ag-side-btn { display: none; }
+  /* Mọi card xếp chồng cùng một khung; chỉ cái .shown hiện. Card ẩn vẫn có hộp thật nên terminal của
+     nó không bao giờ bị fit về 0×0. */
+  .world { position: relative; flex: 1; min-height: 0; margin: 8px 12px 12px; }
+  .node { position: absolute; inset: 0; display: flex; min-width: 0; visibility: hidden; }
+  .node.shown { visibility: visible; }
+  .world.grid { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(0, 1fr); }
+  .world.grid[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .world.grid[data-n="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+  .world.grid .node.shown { position: relative; inset: auto; }
+  .node > .agent-card { flex: 1 1 0; min-width: 0; width: auto; display: flex; flex-direction: column; }
+  .node .term-slot { height: auto; }
+  .comps { flex: 1 1 0; min-width: 0; display: grid; }
+  .comp { grid-area: 1 / 1; min-width: 0; min-height: 0; display: flex; }
+  .comp:not(.on) { visibility: hidden; }
+  /* Grid không hiện companion: nó vẫn ở trong DOM (terminal editor sống), phủ lên ô, ẩn. */
+  .world.grid .comps { position: absolute; inset: 0; }
+  .comp > .editor-card, .comp > .folder-card { flex: 1; width: auto; max-width: none; }
+  .comp .editor-card .term-slot { flex: 1; height: auto; max-height: none; }
+  .comp .folder-card .fld-body { flex: 1; height: auto; max-height: none; }
+  .node.has-comp > .agent-card { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .node.has-comp .comp > * { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+  .world.grid .node.has-comp > .agent-card { border-radius: var(--r-card); }
   .cv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-style: italic; pointer-events: none; }
   .cv-empty[hidden] { display: none; }
-  /* Minimap: toàn cảnh + khung nhìn. Ngồi TRÊN thanh zoom (thanh cao ~34 + đáy 14). */
-  .cv-minimap { right: 14px; bottom: 60px; background: var(--card); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: var(--sh-2); cursor: crosshair; touch-action: none; }
-  /* [hidden] không có tác dụng với phần tử SVG — UA stylesheet chỉ áp cho HTML. */
-  .cv-minimap[hidden] { display: none; }
-  .mm-r { fill: var(--muted); stroke: none; }
-  .mm-r.st-running { fill: var(--blue); }
-  .mm-r.st-paused { fill: var(--amber); }
-  .mm-r.st-stopped { fill: var(--red); }
-  .mm-r.mm-sel { fill: var(--accent); }
-  .mm-zone { fill: none; stroke: var(--zone-line); stroke-width: 1; }
-  .mm-view { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
-  .rz { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize;
-    z-index: 3; background: linear-gradient(135deg, transparent 50%, var(--faint) 50%);
-    opacity: .35; border-bottom-right-radius: var(--r-card); }
-  .rz:hover { opacity: .9; }
+  /* Trước .ag-main trong DOM (Tab tới danh sách trước terminal, xterm giữ phím Tab), hiện bên phải. */
+  .ag-side { order: 2; flex: none; width: 320px; display: flex; flex-direction: column; min-height: 0;
+    background: var(--panel); border-left: 1px solid var(--border); }
+  .win-list { flex: none; max-height: 40%; overflow-y: auto; padding: 6px; display: grid; gap: 1px;
+    border-bottom: 1px solid var(--border); }
+  .win-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px;
+    border: 0; border-radius: 7px; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; }
+  .win-row:hover { background: var(--panel2); }
+  .win-row.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+  .win-row.ed { padding-left: 28px; color: var(--muted); font-size: 12px; }
+  .win-row.ed.on { color: var(--text); }
+  .win-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .win-q { flex: none; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  @media (max-width: 800px) {
+    #ag-side-btn { display: inline-flex; align-items: center; }
+    .ag-side { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 100%);
+      z-index: 5; box-shadow: var(--sh-3); }
+    .ag-side.open { display: flex; }
+    .world { margin: 6px 0 0; }
+    .node > .agent-card { border-left-width: 0; border-right-width: 0; border-radius: 0; }
+    .pane-bar, .attn { padding-left: 12px; padding-right: 12px; }
+    .pane-bar .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    .attn-item { flex-wrap: wrap; }
+    .node .orch-body { flex-direction: column; }
+    .node .orch-side { flex-direction: row; flex-wrap: wrap; width: auto; border-right: 0;
+      border-bottom: 1px solid var(--border); }
+    .node .orch-side .cli-sel { width: auto; }
+    .node.has-comp { flex-direction: column; }
+    .node.has-comp .comp > * { margin-left: 0; }
+  }
 
   /* ── Node card ────────────────────────────────────────────────────────── */
   /* Card chỉ mang DANH TÍNH + TRẠNG THÁI. Mọi thao tác nằm ở hover toolbar (4 nút hay dùng)
@@ -958,10 +958,10 @@
   .agent-card:hover { box-shadow: var(--sh-3); }
   /* Đang chạy chỉ báo bằng chấm nhấp nháy; viền accent dành riêng cho card đang chọn. */
   .agent-card.st-paused, .agent-card.needs-you { border-color: var(--amber); }
-  .node.sel .agent-card { border-color: var(--accent); box-shadow: var(--ring), var(--sh-2); }
+  .world.grid .node.sel .agent-card { border-color: var(--accent); box-shadow: var(--ring), var(--sh-2); }
   .agent-card.st-stopped { opacity: .68; }
   .node-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 10px 12px 9px;
-    cursor: grab; user-select: none; border-bottom: 1px solid var(--border); }
+    user-select: none; border-bottom: 1px solid var(--border); }
   .node-head b { font-size: 13.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
   .node-meta { flex-basis: 100%; padding-left: 16px; font-family: var(--mono); font-size: 11px;
@@ -989,56 +989,6 @@
   .eng-claude { background: var(--amber-soft); color: var(--amber); }
   .eng-agy { background: var(--blue-soft); color: var(--blue); }
 
-  /* Zone: khung bo quanh các agent chung cwd */
-  .group-zone { border: 1px solid var(--zone-line); border-radius: 16px; background: var(--zone-fill);
-    pointer-events: none; }
-  .zone-head { pointer-events: auto; cursor: grab; user-select: none; padding: 10px 14px;
-    display: flex; flex-direction: column; gap: 5px; }
-  .zone-title { display: flex; align-items: center; gap: 8px; overflow: hidden; color: var(--muted); font-size: 12px; }
-  .zone-title b { font-size: 13px; font-weight: 600; color: var(--text); }
-  .g-count { font-size: 12px; color: var(--muted); flex: none; }
-  .g-path { font-family: var(--mono); font-size: 10px; color: var(--faint);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Khung CẶP: terminal + card editor của cùng một session. Viền nét đứt để phân biệt với zone
-     cwd (nét liền) khi hai khung lồng nhau, và nền trong suốt để zone cwd bên dưới không bị
-     sẫm gấp đôi ở phần giao nhau. */
-  .pair-zone { border-style: dashed; border-color: var(--border-strong); background: transparent;
-    border-radius: 14px; }
-  .pair-head { padding: 5px 10px; }
-  .pair-head .zone-title b { font-size: 12px; }
-  /* .group-zone là pointer-events:none, tay nắm phải tự bật lại — không thì kéo góc không ăn. */
-  .pair-zone .rz { pointer-events: auto; }
-  /* Hai card trong cặp giáp lưng nhau: bo góc chỗ giáp phải phẳng, không thì giữa khối hở ra
-     hai đường cong. Lớp .paired/.pair-anchor do snapPairs gắn, gỡ theo mỗi lần render. */
-  .node.pair-anchor > .agent-card { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-  .node.paired > .editor-card, .node.paired > .folder-card { border-top-left-radius: 0;
-    border-bottom-left-radius: 0; }
-  /* Chiều cao card editor suy ra từ card terminal, nên tay nắm hai chiều của riêng nó sẽ bị ghi
-     đè ngay khung hình sau — ẩn đi, đừng để người dùng kéo một thứ không ăn. Đổi tỉ lệ chia đôi
-     bằng tay nắm của chính card terminal, hoặc tay nắm của cả khung. */
-  .node.paired > .rz { display: none; }
-
-  /* Edges */
-  svg.edges { position: absolute; top: 0; left: 0; width: 10px; height: 10px;
-    overflow: visible; pointer-events: none; }
-  .edge { stroke-width: 2; fill: none; }
-  .edge-wait { stroke: var(--edge-wait); stroke-dasharray: 4 4; }
-  /* steps(5): nét vẫn chạy nhưng vẽ lại 5 lần/giây thay vì mỗi khung hình (stroke-dashoffset không
-     chạy trên compositor — mỗi khung là một lượt repaint ở main thread, ở mỗi pane đang hiện). */
-  .edge-run { stroke: var(--edge-run); stroke-dasharray: 6 5; animation: edgeflow 1s steps(5) infinite; }
-  /* Một chiều (báo cáo / không cần trả lời): chấm thay vì nét — nhìn là biết sẽ không có mũi tên về. */
-  .edge-oneway { stroke-dasharray: 1 5; stroke-linecap: round; }
-  @keyframes edgeflow { to { stroke-dashoffset: -11; } }
-
-  /* Card agent: luôn có terminal nhúng */
-  .node.sized > .agent-card, .node.sized > .editor-card, .node.sized > .folder-card {
-    width: 100%; height: 100%; display: flex; flex-direction: column; }
-  .node.sized .editor-card .term-slot { flex: 1; height: auto; max-height: none; }
-  /* Chiều cao card thư mục suy ra từ card terminal → danh sách phải ăn hết phần còn lại, không
-     thì nó giữ 340px cũ và đáy card là một mảng trống. */
-  .node.sized .folder-card .fld-body { flex: 1; height: auto; max-height: none; }
-  .node.sized .term-slot { height: auto; }
-  .agent-card.orch-term { width: 680px; }
   .orch-body { display: flex; min-height: 0; flex: 1; }
   .orch-side { display: flex; flex-direction: column; gap: 3px; padding: 6px 5px;
     border-right: 1px solid var(--border); flex: none; width: 46px; min-width: 0; align-items: center; }
@@ -1053,7 +1003,7 @@
   /* Card editor (nvim) — chỉ là một terminal có header, không iframe nên không cần gì thêm */
   .editor-card { width: 860px; max-width: 92vw; display: flex; flex-direction: column; padding: 0; }
   .editor-head { display: flex; gap: 8px; align-items: center; padding: 7px 10px;
-    border-bottom: 1px solid var(--border); font-size: 11.5px; cursor: grab; }
+    border-bottom: 1px solid var(--border); font-size: 11.5px; }
   .editor-head b, .editor-head .ed-ic { color: var(--amber); }
   .ed-tabs { display: flex; gap: 2px; background: var(--panel2); border: 1px solid var(--border);
     border-radius: 7px; padding: 2px; flex: none; }
@@ -1075,7 +1025,7 @@
   /* Card thư mục — duyệt project ngay trong dashboard, không phải cửa sổ của OS */
   .folder-card { width: 560px; max-width: 92vw; display: flex; flex-direction: column; padding: 0; }
   .folder-head { display: flex; gap: 6px; align-items: center; padding: 7px 10px; min-width: 0;
-    border-bottom: 1px solid var(--border); font-size: 11.5px; cursor: grab; }
+    border-bottom: 1px solid var(--border); font-size: 11.5px; }
   .folder-head .fld-ic { color: var(--blue); flex: none; }
   .fld-crumb { display: flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; }
   .fld-crumb button { padding: 1px 5px; font-size: 11.5px; background: transparent; border: none;
@@ -1104,8 +1054,8 @@
     border-radius: var(--r-ctl); }
   .fld-note { padding: 6px 10px; color: var(--faint); font-size: 11px; line-height: 1.6; }
 
-  /* ── Inspector (bên phải canvas) ──────────────────────────────────────── */
-  .inspector { flex: none; width: 340px; background: var(--panel); border-left: 1px solid var(--border);
+  /* ── Inspector (cột phải, dưới danh sách cửa sổ) ──────────────────────────────────────── */
+  .inspector { flex: 1; background: var(--panel);
     display: flex; flex-direction: column; min-height: 0; }
   .inspector[hidden] { display: none; }
   .insp-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 6px 16px; }
@@ -1255,9 +1205,6 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
-  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
-  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a3 3 0 1 1 4.3 2.9c-.9.5-1.5 1.1-1.5 2.3M12 17.6h.01"/></symbol>
   <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14"/></symbol>
   <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-map" viewBox="0 0 24 24"><path d="m9 4-6 3v13l6-3 6 3 6-3V4l-6 3z"/><path d="M9 4v13M15 7v13"/></symbol>
@@ -1467,7 +1414,7 @@
         <span id="ws-detail-path" class="pb-path"></span>
       </div>
       <div class="tabs" role="tablist" aria-label="Workspace views">
-        <button id="tab-btn-agents" class="tab active" role="tab" onclick="switchTab('agents')">Canvas</button>
+        <button id="tab-btn-agents" class="tab active" role="tab" onclick="switchTab('agents')">Agents</button>
         <button id="tab-btn-board" class="tab" role="tab" onclick="switchTab('board')"
           title="Each agent's backlog: work it holds, and where its sub-agents are with it">
           Board<span id="board-proposed" class="tab-count" hidden title="Proposals waiting for your decision"></span></button>
@@ -1487,69 +1434,44 @@
     <!-- Việc đang chờ người dùng: signal cần duyệt + agent bị "needs you". Ẩn khi rỗng (renderAttn). -->
     <div id="attn" class="attn" role="region" aria-label="Needs your attention" hidden></div>
 
-    <!-- Mọi cửa sổ của workspace, một hàng ngang: bấm = nhảy tới card. Nằm NGOÀI #tab-agents vì
-         trong đó là flex ngang (canvas + inspector); ở đây nó là một hàng của cột #ws-detail-view. -->
-    <div id="win-bar" class="win-bar" hidden>
-      <span id="win-chips" class="win-chips"></span>
-    </div>
-
     <div id="tab-agents">
-      <div id="canvas" class="canvas">
+      <div id="ag-side" class="ag-side">
+        <nav id="win-list" class="win-list" aria-label="Windows"></nav>
+        <aside id="inspector" class="inspector" hidden>
+          <div class="insp-head">
+            <span id="insp-dot" class="status-dot"></span>
+            <div class="insp-id">
+              <div class="insp-name-row"><b id="insp-name"></b>
+                <button class="icon-btn" onclick="renameCard()" title="Rename this agent">
+                  <svg class="ic sm"><use href="#i-edit"/></svg></button></div>
+              <span id="insp-path" class="pb-path"></span>
+            </div>
+          </div>
+          <div class="insp-tabs" role="tablist" aria-label="Agent details">
+            <button id="insp-tab-overview" role="tab" onclick="inspTab('overview')">Overview</button>
+            <button id="insp-tab-work" role="tab" onclick="inspTab('work')">Work</button>
+            <button id="insp-tab-settings" role="tab" onclick="inspTab('settings')">Settings</button>
+          </div>
+          <div id="insp-body" class="insp-body"></div>
+          <!-- Ngoài #insp-body: body dựng lại mỗi lần refresh, chữ đang gõ ở đây không được mất. -->
+          <form class="insp-compose" onsubmit="inspSend(event)">
+            <label for="insp-msg" class="sr-only">Message this agent</label>
+            <input id="insp-msg" autocomplete="off" placeholder="Message…">
+            <button id="insp-send" class="primary icon-btn" type="submit" title="Send" aria-label="Send message">
+              <svg class="ic"><use href="#i-send"/></svg></button>
+          </form>
+        </aside>
+      </div>
+      <div class="ag-main">
+        <div class="ag-bar">
+          <button id="ag-mode" class="secondary" onclick="toggleGrid()">Grid</button>
+          <span class="spacer"></span>
+          <button id="ag-side-btn" class="secondary" aria-controls="ag-side"
+            onclick="document.getElementById('ag-side').classList.toggle('open')">Windows</button>
+        </div>
         <div id="world" class="world"></div>
         <div id="cv-empty" class="cv-empty" hidden>No agents in this workspace yet.</div>
-        <svg id="minimap" class="cv-overlay cv-minimap" width="180" height="120"
-          viewBox="0 0 180 120" hidden></svg>
-        <div class="cv-overlay cv-toolbar">
-          <button class="icon-btn" onclick="cvZoom(1/1.2)" title="Zoom out">
-            <svg class="ic"><use href="#i-minus"/></svg></button>
-          <span id="cv-zoom">100%</span>
-          <button class="icon-btn" onclick="cvZoom(1.2)" title="Zoom in">
-            <svg class="ic"><use href="#i-plus"/></svg></button>
-          <span class="cv-sep"></span>
-          <button class="icon-btn" onclick="cvFit()" title="Fit every agent into view">
-            <svg class="ic"><use href="#i-fit"/></svg></button>
-        </div>
-        <div class="cv-overlay cv-legend" aria-label="Arrow legend">
-          <span class="lg-run"></span>working<span class="lg-wait"></span>queued</div>
-        <button class="cv-overlay cv-help" title="Canvas help"
-          onclick="const h = document.getElementById('cv-hint'); h.hidden = !h.hidden">
-          <svg class="ic"><use href="#i-help"/></svg></button>
-        <div id="cv-hint" class="cv-overlay cv-hint" hidden>
-          <b>Controls:</b> drag the background = pan · scroll = zoom · <b>Shift + scroll = zoom
-          anywhere</b>, including over a terminal, for when a card covers the whole canvas ·
-          drag a card header = move that agent · drag a folder header = move the whole group.<br>
-          <b>Click a card</b> to select it — everything about that agent opens in the panel on the
-          right. Hover a card for its quick actions.<br>
-          <b>Arrows</b> = tasks currently in flight between agents: amber dashed = queued · moving accent dashes = working.
-          Finished or failed ones disappear — see the History tab.
-        </div>
       </div>
-      <aside id="inspector" class="inspector" hidden>
-        <div class="insp-head">
-          <span id="insp-dot" class="status-dot"></span>
-          <div class="insp-id">
-            <div class="insp-name-row"><b id="insp-name"></b>
-              <button class="icon-btn" onclick="renameCard()" title="Rename this agent">
-                <svg class="ic sm"><use href="#i-edit"/></svg></button></div>
-            <span id="insp-path" class="pb-path"></span>
-          </div>
-          <button class="icon-btn" onclick="selectNode(null)" title="Close" aria-label="Close panel">
-            <svg class="ic"><use href="#i-x"/></svg></button>
-        </div>
-        <div class="insp-tabs" role="tablist" aria-label="Agent details">
-          <button id="insp-tab-overview" role="tab" onclick="inspTab('overview')">Overview</button>
-          <button id="insp-tab-work" role="tab" onclick="inspTab('work')">Work</button>
-          <button id="insp-tab-settings" role="tab" onclick="inspTab('settings')">Settings</button>
-        </div>
-        <div id="insp-body" class="insp-body"></div>
-        <!-- Ngoài #insp-body: body dựng lại mỗi lần refresh, chữ đang gõ ở đây không được mất. -->
-        <form class="insp-compose" onsubmit="inspSend(event)">
-          <label for="insp-msg" class="sr-only">Message this agent</label>
-          <input id="insp-msg" autocomplete="off" placeholder="Message…">
-          <button id="insp-send" class="primary icon-btn" type="submit" title="Send" aria-label="Send message">
-            <svg class="ic"><use href="#i-send"/></svg></button>
-        </form>
-      </aside>
     </div>
 
     <!-- Đội của director (pstack): sub-agent làm việc trong worktree riêng, verifier độc lập kiểm

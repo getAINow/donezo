@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 //   SHELL  (/)            — header, tab workspace, panel. Không có canvas.
 //   PANE   (/?pane=1&ws=) — một workspace trong iframe: canvas + inspector + history.
 // Nhờ vậy 2 workspace mở song song mà KHÔNG phải bóc mọi state toàn cục của canvas
-// (CV, cvTerms, cvNodeEls, currentWS…) thành object per-pane: mỗi pane là một document
+// (cvTerms, selSid, currentWS…) thành object per-pane: mỗi pane là một document
 // riêng nên các biến đó vốn đã tách sẵn.
 const PANE = new URLSearchParams(location.search).has("pane");
 
@@ -1087,106 +1087,93 @@ function renderWsBanner() {
 // Query suffix để scope API theo workspace đang lọc.
 function wsQuery() { return currentWS ? "?workspace_id=" + encodeURIComponent(currentWS) : ""; }
 
-// ── Agents canvas (nodeterm-style) ──────────────────────────────────────────
-// Mỗi session = 1 card trên canvas pan/zoom; các agent CHUNG cwd (≥2) được bao trong
-// 1 group card thư mục. Vị trí card + view (pan/zoom) lưu localStorage theo workspace.
-
-let CV = { k: 1, tx: 40, ty: 40 };  // view transform hiện tại (scale + translate)
-let cvWs = null;                    // workspace mà CV đang thuộc về (đổi ws → nạp lại view)
-let cvInteracting = false;          // đang pan/kéo card → SSE refresh KHÔNG re-render canvas
-let cvPending = null;               // data đến trong lúc kéo → render lại khi thả
+// ── Agents: one fixed layout, no canvas ─────────────────────────────────────
+// Main area shows the selected agent's card (Focus) or up to four tiles (Grid); every other card
+// stays in the DOM, stacked and hidden, so its terminal keeps its socket and its size. The right
+// column lists every window and holds the inspector. Store per workspace: sel, grid, tiles, seen,
+// folders (old pos/view entries are ignored).
 
 const cvStoreKey = () => "orch-canvas." + (currentWS || "default");
 function cvLoad() {
   try { return JSON.parse(localStorage.getItem(cvStoreKey())) || {}; } catch { return {}; }
 }
 function cvSave(patch) {
-  const st = { ...cvLoad(), ...patch };
+  const { pos, view, ...st } = { ...cvLoad(), ...patch };   // pos/view: vị trí canvas cũ, bỏ đi
   try { localStorage.setItem(cvStoreKey(), JSON.stringify(st)); } catch { /* full/private mode */ }
 }
 
-function applyView() {
-  $("world").style.transform = `translate(${CV.tx}px, ${CV.ty}px) scale(${CV.k})`;
-  $("cv-zoom").textContent = Math.round(CV.k * 100) + "%";
-  redrawMinimap();
-}
-
-// Mọi "cửa sổ" của workspace này: terminal của từng session + card editor/thư mục đang mở.
-// Xếp theo NHÓM: terminal của session rồi ngay sau là editor của chính nó. Trước đây gom hết
-// terminal trước, editor dồn xuống cuối — cùng một session mà hai chip nằm hai đầu thanh, đọc
-// tên trùng nhau xong vẫn phải quét cả thanh mới thấy cái còn lại.
+// Mọi "cửa sổ" của workspace này: terminal của từng session + card editor/thư mục đang mở, xếp theo
+// NHÓM: terminal của session rồi ngay sau là editor/thư mục của chính nó.
 function winList() {
   const sessions = cvLast.sessions || [];
   const openF = folderMap();
   const out = [];
   for (const s of sessions) {
-    out.push({ nid: "s:" + s.id, kind: "Terminal", icon: ic("terminal", "sm"), head: true,
+    out.push({ nid: "s:" + s.id, kind: "Terminal", icon: ic("terminal", "sm"), head: true, s,
                name: s.name, sub: s.cwd || "" });
     for (const c of editorCards)
       if (c.session === s.id)
-        out.push({ nid: "editor:" + c.session, kind: "nvim", icon: ic("edit", "sm"), ed: true,
-                   name: c.name || c.session, sub: c.cwd || "" });
+        out.push({ nid: "editor:" + c.session, kind: "Editor", icon: ic("edit", "sm"), ed: true,
+                   name: "editor", sub: c.cwd || "" });
     if (openF[s.id] !== undefined)
       out.push({ nid: "folder:" + s.id, kind: "Folder", icon: ic("folder", "sm"), ed: true,
-                 name: s.name, sub: s.cwd || "" });
+                 name: "folder", sub: s.cwd || "" });
   }
   return out;
 }
 
-// Thanh cửa sổ: mọi cửa sổ của workspace nằm ngang ngay dưới topbar, bấm chip là canvas nhảy tới
-// card đó. Tab History không có canvas → ẩn thanh. Workspace chưa có cửa sổ nào
-// thì VẪN hiện, kèm câu chỉ đường: ẩn sạch thì người dùng tưởng tính năng biến mất (nút Windows
-// cũ luôn nằm đó, dù đếm 0).
-function renderWinBar() {
-  const bar = $("win-bar"), chips = $("win-chips");
-  if (!bar || !chips) return;
+// Danh sách cửa sổ ở cột phải. Hàng là <button> (Tab tới được, Enter là bấm); highlight do
+// markSelection gắn, không render lại, để focus bàn phím không rơi khỏi hàng vừa bấm.
+function renderWinList() {
+  const box = $("win-list");
   const list = winList();
-  bar.hidden = $("tab-agents").hidden;
+  const keep = box.contains(document.activeElement) ? document.activeElement.dataset.nid : null;
   if (!list.length) {
-    chips.innerHTML = `<span class="win-empty">No windows yet — spawn an
-      agent (${ic("terminal", "sm")}) or open an editor, and it shows up here.</span>`;
+    box.innerHTML = `<span class="win-empty">No windows yet: spawn an agent and it shows up here.</span>`;
     return;
   }
-  // Vạch ngăn trước mỗi nhóm (trừ nhóm đầu): trong nhóm các chip dính nhau, giữa hai nhóm có đường
-  // kẻ — nhìn phát biết chip nào đi với chip nào.
-  chips.innerHTML = list.map((w, i) =>
-    (w.head && i ? `<span class="win-sep"></span>` : "") +
-    `<button class="win-chip${w.ed ? " ed" : ""}"
-      onclick="focusNode('${esc(w.nid)}')"
-      title="${esc(w.kind)}${w.sub ? " · " + esc(w.sub) : ""} — jump to this card">
-      ${w.icon}<span>${esc(w.name)}</span></button>`).join("");
+  const needs = needsYou(cvLast.signals);
+  box.innerHTML = list.map((w) => {
+    const s = w.s;
+    const extra = !s ? "" : (needs.has(s.id) ? `<span class="needs-badge" title="A message waits for your approval">needs you</span>` : "")
+      + (s.term_queue ? `<span class="win-q" title="Signals waiting for the open terminal">${s.term_queue} message${s.term_queue > 1 ? "s" : ""} waiting</span>` : "");
+    return `<button class="win-row${w.ed ? " ed" : ""}" data-nid="${esc(w.nid)}"
+      onclick="focusNode('${esc(w.nid)}')" title="${esc(w.kind)}${w.sub ? " · " + esc(w.sub) : ""}">
+      ${s ? `<span class="status-dot dot-${esc(s.status)}"></span>` : w.icon}
+      <span class="win-name">${esc(w.name)}</span>${extra}</button>`;
+  }).join("");
+  if (keep) box.querySelector(`[data-nid="${CSS.escape(keep)}"]`)?.focus();
 }
-window.renderWinBar = renderWinBar;
 
-// Đưa node vào giữa khung nhìn + chọn nó. Giữ nguyên mức zoom: người dùng đặt zoom nào là cố ý,
-// tự phóng to giúp chỉ làm họ mất chỗ.
+// Hiện cửa sổ nid ("s:<sid>", "editor:<sid>", "folder:<sid>"): chọn agent, đưa nó lên khung chính,
+// nháy một cái. Một hàm cho mọi lối vào: hàng trong danh sách, palette, nút Show của #attn.
+const compSel = {};   // sid → "editor" | "folder": companion đang hiện khi mở cả hai
 function focusNode(nid) {
-  const el = $("world").querySelector(`.node[data-nid="${nid}"]`);
+  const i = nid.indexOf(":"), kind = nid.slice(0, i), sid = nid.slice(i + 1);
+  const el = $("world").querySelector(`.node[data-nid="s:${CSS.escape(sid)}"]`);
   if (!el) return;
-  if (nid.startsWith("s:")) selectNode(nid.slice(2));
-  const cv = $("canvas");
-  const x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
-  CV.tx = cv.clientWidth / 2 - (x + el.offsetWidth / 2) * CV.k;
-  CV.ty = cv.clientHeight / 2 - (y + el.offsetHeight / 2) * CV.k;
-  applyView(); cvSave({ view: CV });
-  // Gỡ .found ở MỌI node trước: animation kết thúc ở outline trong suốt nên nhìn thì không thấy
-  // gì, nhưng để nó bám lại thì "card vừa tìm ra" không còn là một node duy nhất nữa.
-  // remove + đọc offsetWidth = ép reflow, không thì tìm lại đúng card đó sẽ không nháy nữa.
+  if (kind !== "s") {
+    compSel[sid] = kind;
+    if (cvLoad().grid) cvSave({ grid: false });   // Grid không hiện companion: cửa sổ vừa bấm phải hiện
+  }
+  selectNode(sid);
+  if (matchMedia("(max-width: 800px)").matches) $("ag-side").classList.remove("open");
+  // remove + đọc offsetWidth = ép reflow, không thì nháy lại đúng card đó sẽ không chạy.
   for (const n of $("world").querySelectorAll(".node.found")) n.classList.remove("found");
   void el.offsetWidth;
   el.classList.add("found");
 }
 window.focusNode = focusNode;
 
-// Palette của shell chọn một agent: pane mở tab Agents, chọn + căn giữa card của nó. Card chưa
-// vẽ (pane vừa load, chưa refresh xong) → giữ sid, refreshNow thử lại sau renderCanvas.
+// Palette của shell chọn một agent: pane mở tab Agents rồi hiện cửa sổ của nó. Card chưa vẽ (pane
+// vừa load, chưa refresh xong) → giữ sid, refreshNow thử lại sau renderCanvas.
 let paneFocusSid = null;
 function paneFocus(sid) {
   if (!sid) return;
   if (window.frameElement) delete window.frameElement.dataset.focus;
   paneFocusSid = sid;
   switchTab("agents");
-  requestAnimationFrame(paneFocusTry);   // sau cvFit của switchTab, không thì nó kéo khung nhìn đi
+  requestAnimationFrame(paneFocusTry);
 }
 function paneFocusTry() {
   if (!paneFocusSid || !$("world").querySelector(`.node[data-nid="s:${CSS.escape(paneFocusSid)}"]`)) return;
@@ -1194,142 +1181,11 @@ function paneFocusTry() {
   paneFocusSid = null;
 }
 
-// ── Minimap ─────────────────────────────────────────────────────────────────
-// Toàn cảnh canvas + ô khung nhìn. Click/kéo trong map = dời khung nhìn tới đó.
-// Vẽ lại từ applyView (pan/zoom) và redrawEdges (node đổi vị trí/số lượng) — hai chỗ đó
-// phủ hết mọi trường hợp hình học đổi, khỏi phải nhớ rải lời gọi khắp nơi.
-const MM = { w: 180, h: 120, pad: 6 };
-
-// Node được tính vào hình học của canvas.
-function cvGeomNodes() {
-  return [...$("world").children].filter((el) => el.classList.contains("node"));
+function toggleGrid() {
+  cvSave({ grid: !cvLoad().grid });
+  markSelection();
 }
-
-// Khung bao gồm cả node LẪN khung nhìn: chỉ lấy node thì pan ra vùng trống là ô xanh
-// trôi ra ngoài map, người dùng mất luôn thứ duy nhất chỉ họ đang ở đâu.
-function mmBox() {
-  const cv = $("canvas"), world = $("world");
-  if (!cv || !world) return null;
-  const nodes = cvGeomNodes();
-  if (!nodes.length) return null;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const add = (x, y, w, h) => {
-    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-    x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h);
-  };
-  for (const el of nodes)
-    add(parseFloat(el.style.left) || 0, parseFloat(el.style.top) || 0, el.offsetWidth, el.offsetHeight);
-  const view = { x: -CV.tx / CV.k, y: -CV.ty / CV.k,
-                 w: cv.clientWidth / CV.k, h: cv.clientHeight / CV.k };
-  // Mọi node đã nằm trong khung nhìn → bản đồ chỉ còn là một ô xanh to, không nói thêm gì.
-  // Ẩn luôn thay vì thêm nút bật/tắt: nó tự xuất hiện đúng lúc có ích.
-  if (x0 >= view.x && y0 >= view.y && x1 <= view.x + view.w && y1 <= view.y + view.h) return null;
-  add(view.x, view.y, view.w, view.h);
-  const k = Math.min((MM.w - MM.pad * 2) / (x1 - x0 || 1),
-                     (MM.h - MM.pad * 2) / (y1 - y0 || 1));
-  return { x0, y0, k, nodes, view };
-}
-
-function redrawMinimap() {
-  const mm = $("minimap");
-  if (!mm) return;
-  const b = mmBox();
-  // toggleAttribute, KHÔNG phải `.hidden =`: hidden là thuộc tính của HTMLElement, SVGElement
-  // không có nó. Gán `.hidden` chỉ tạo expando trên object JS, attribute trong DOM đứng yên
-  // và minimap ẩn vĩnh viễn — đọc lại `.hidden` vẫn thấy false nên nhìn như đang chạy tốt.
-  mm.toggleAttribute("hidden", !b);
-  if (!b) return;
-  const X = (x) => (MM.pad + (x - b.x0) * b.k).toFixed(1);
-  const Y = (y) => (MM.pad + (y - b.y0) * b.k).toFixed(1);
-  const S = (v) => Math.max(2, v * b.k).toFixed(1);   // sàn 2px: card nhỏ quá thì mất hút
-  let out = "";
-  for (const el of b.nodes) {
-    const zone = el.classList.contains("group-zone");
-    const card = el.querySelector(".agent-card");
-    const st = card ? ([...card.classList].find((c) => c.startsWith("st-")) || "") : "";
-    const sel = el.classList.contains("sel") ? " mm-sel" : "";
-    out += `<rect class="${zone ? "mm-zone" : "mm-r " + st + sel}" rx="${zone ? 3 : 1.5}"
-      x="${X(parseFloat(el.style.left) || 0)}" y="${Y(parseFloat(el.style.top) || 0)}"
-      width="${S(el.offsetWidth)}" height="${S(el.offsetHeight)}"/>`;
-  }
-  out += `<rect class="mm-view" rx="2" x="${X(b.view.x)}" y="${Y(b.view.y)}"
-    width="${S(b.view.w)}" height="${S(b.view.h)}"/>`;
-  mm.innerHTML = out;
-}
-
-// Kéo trong minimap: GIỮ NGUYÊN phép chiếu bắt được lúc pointerdown. Tính lại mỗi lần
-// move thì khung bao đổi theo chính khung nhìn vừa dời — con trỏ và bản đồ đá nhau.
-function mmInit() {
-  const mm = $("minimap");
-  if (!mm) return;
-  let drag = null;
-  const goto_ = (e) => {
-    const cv = $("canvas"), r = drag.rect, b = drag.b;
-    const wx = b.x0 + (e.clientX - r.left - MM.pad) / b.k;
-    const wy = b.y0 + (e.clientY - r.top - MM.pad) / b.k;
-    CV.tx = cv.clientWidth / 2 - wx * CV.k;
-    CV.ty = cv.clientHeight / 2 - wy * CV.k;
-    applyView();
-  };
-  mm.addEventListener("pointerdown", (e) => {
-    // DỪNG nổi bọt. Canvas có sẵn chốt `e.target.closest('.cv-overlay')` để không pan khi bấm vào
-    // overlay, nhưng chốt đó ĐỌC HỤT ở đây: goto_ bên dưới gọi applyView → redrawMinimap →
-    // mm.innerHTML = … , tức là cái <rect> đang là e.target bị GỠ khỏi cây trước khi canvas kịp
-    // xét. Node rời cây thì closest() trả null → canvas tưởng bấm vào nền và mở luôn một cú pan
-    // thứ hai chạy song song. Đã đo: canvas pointerdown nhìn thấy "rect overlay=false".
-    e.stopPropagation();
-    const b = mmBox();
-    if (!b) return;
-    drag = { b, rect: mm.getBoundingClientRect() };
-    mm.setPointerCapture(e.pointerId);
-    goto_(e);
-  });
-  const up = () => { if (drag) { drag = null; cvSave({ view: CV }); } };
-  mm.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    if (!e.buttons) return up();   // không còn giữ nút = kéo đã kết thúc ở đâu đó, tự gỡ
-    goto_(e);
-  });
-  // up/cancel bắt ở WINDOW chứ không ở minimap. Kéo cho mọi node lọt hết vào khung nhìn thì
-  // redrawMinimap ẩn luôn minimap NGAY GIỮA cú kéo → element ẩn mất pointer capture, pointerup
-  // rơi vào canvas, `drag` không ai xoá. Lần sau minimap hiện lại là chỉ rê chuột qua đã kéo
-  // khung nhìn đi mà chưa bấm nút nào.
-  addEventListener("pointerup", up);
-  addEventListener("pointercancel", up);
-  mm.addEventListener("lostpointercapture", up);
-}
-
-// Zoom quanh tâm khung nhìn (nút +/−) — wheel thì zoom quanh con trỏ (xem cvInit).
-function cvZoom(f) {
-  const cv = $("canvas"), cx = cv.clientWidth / 2, cy = cv.clientHeight / 2;
-  const k2 = Math.min(1.6, Math.max(0.35, CV.k * f));
-  CV.tx = cx - (cx - CV.tx) * (k2 / CV.k);
-  CV.ty = cy - (cy - CV.ty) * (k2 / CV.k);
-  CV.k = k2; applyView(); cvSave({ view: CV });
-}
-window.cvZoom = cvZoom;
-
-// Fit toàn bộ node vào khung nhìn (padding 40, không phóng quá 100%).
-// Canvas đang ẩn (trang mở thẳng vào tab History/Team) đo được 0×0: fit lúc đó ra zoom ÂM, rồi bị
-// lưu lại, và quay về tab Agents là một canvas trống ở "-138%". Hoãn tới lúc tab Agents hiện.
-let cvFitPending = false;
-function cvFit() {
-  const cv = $("canvas");
-  if (!cv.clientWidth || !cv.clientHeight) { cvFitPending = true; return; }
-  cvFitPending = false;
-  const nodes = cvGeomNodes();
-  if (!nodes.length) { CV = { k: 1, tx: 40, ty: 40 }; applyView(); return; }
-  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-  for (const el of nodes) {
-    const x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
-    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-    x1 = Math.max(x1, x + el.offsetWidth); y1 = Math.max(y1, y + el.offsetHeight);
-  }
-  const k = Math.max(0.1, Math.min(1, (cv.clientWidth - 80) / (x1 - x0), (cv.clientHeight - 80) / (y1 - y0)));
-  CV = { k, tx: 40 - x0 * k, ty: 40 - y0 * k };
-  applyView(); cvSave({ view: CV });
-}
-window.cvFit = cvFit;
+window.toggleGrid = toggleGrid;
 
 // ── Terminal nhúng trong card 👑 (xterm.js ↔ /ws/terminal ↔ PTY claude --resume) ──
 // Element terminal sống NGOÀI chu trình innerHTML của canvas: tạo 1 lần per session,
@@ -1567,7 +1423,7 @@ function connectTerm(t) {
        + (t.cli ? `&cli=${encodeURIComponent(t.cli)}` : "");
   t.ws = new WebSocket(`${proto}://${location.host}${path}`);
   t.ws.binaryType = "arraybuffer";
-  t.ws.onopen = () => { t.waiting = false; fitTerm(t); };
+  t.ws.onopen = () => { t.waiting = false; t.sent = ""; fitTerm(t, true); };
   t.ws.onmessage = (e) => t.term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data));
   t.ws.onclose = (e) => {
     if (e.code === 4001) { scheduleRefresh(); return; }   // nvim tự thoát (:q, ZZ): card đã đóng ở server
@@ -1581,17 +1437,35 @@ function connectTerm(t) {
   };
 }
 
-function fitTerm(t) {
-  if (!t.term || !t.fit || !t.host.isConnected) return;
+// Cửa sổ đang ẩn (nằm trong [inert]) giữ nguyên cỡ cũ: báo PTY một cỡ mới là CLI vẽ lại cả màn.
+// force = lúc socket vừa mở: card ẩn vẫn có hộp thật (xếp chồng cùng khung), cỡ đó là đúng.
+function fitTerm(t, force) {
+  if (!t.term || !t.fit || !t.host.isConnected || !t.host.offsetWidth || !t.host.offsetHeight) return;
+  if (!force && t.host.closest("[inert]")) return;
   try { t.fit.fit(); } catch { return; }
-  if (t.ws && t.ws.readyState === 1)
-    t.ws.send(JSON.stringify({ t: "r", c: t.term.cols, r: t.term.rows }));
+  const c = t.term.cols, r = t.term.rows;
+  if (c < 2 || r < 2 || !t.ws || t.ws.readyState !== 1 || t.sent === c + "x" + r) return;
+  t.sent = c + "x" + r;
+  t.ws.send(JSON.stringify({ t: "r", c, r }));
 }
+
+// Đường fit DUY NHẤT: hộp terminal đổi cỡ (resize cửa sổ, Grid, companion, cột phải, tab hiện lại)
+// → fit một lần sau khi loạt thay đổi lắng xuống.
+function scheduleFit(t) {
+  clearTimeout(t.fitT);
+  t.fitT = setTimeout(() => fitTerm(t), 80);
+}
+const termRO = new ResizeObserver((es) => {
+  for (const e of es) for (const t of Object.values(cvTerms)) if (t.host === e.target) scheduleFit(t);
+});
+const fitAll = () => Object.values(cvTerms).forEach(scheduleFit);
 
 function destroyTerm(sid) {
   const t = cvTerms[sid];
   if (!t) return;
   clearTimeout(t.retry);
+  clearTimeout(t.fitT);
+  termRO.unobserve(t.host);
   if (t.ws) { try { t.ws.close(); } catch { /* đã đóng */ } }
   if (t.term) t.term.dispose();
   t.host.remove();
@@ -1614,6 +1488,7 @@ window.reconnectTerm = reconnectTerm;
 let editorCards = [];   // [{open, session, name, cwd, persistent}] từ /api/editor
 
 async function openEditor(sid) {
+  compSel[sid] = "editor";
   try {
     await api("/api/editor/open", "POST", { session: sid });
     await refreshAll();
@@ -1656,6 +1531,7 @@ function folderStore(sid, rel) {
 }
 
 function openFolderCard(sid) {
+  compSel[sid] = "folder";
   folderStore(sid, folderMap()[sid] || "");
   renderCanvas(cvLast.sessions, cvLast.signals);
 }
@@ -1825,7 +1701,7 @@ window.closeEditor = closeEditor;
 const edView = {};
 function setEditorView(sid, view) {
   edView[sid] = view;
-  const bar = document.querySelector(`.node[data-nid="editor:${CSS.escape(sid)}"] .ed-tabs`);
+  const bar = document.querySelector(`.comp[data-nid="editor:${CSS.escape(sid)}"] .ed-tabs`);
   if (bar) for (const b of bar.querySelectorAll("button")) b.classList.toggle("on", b.dataset.view === view);
 }
 
@@ -1880,17 +1756,18 @@ function attachTerms() {
     const sid = slot.dataset.sid;
     seen.add(key);
     let t = cvTerms[key];
-    if (!t) t = cvTerms[key] = { sid, key, host: Object.assign(document.createElement("div"),
-                                                               { className: "term-host" }),
-                                 started: false, term: null, fit: null, ws: null };
+    if (!t) {
+      t = cvTerms[key] = { sid, key, host: Object.assign(document.createElement("div"),
+                                                         { className: "term-host" }),
+                           started: false, term: null, fit: null, ws: null };
+      termRO.observe(t.host);
+    }
     t.cli = slot.dataset.cli || "";   // đọc TRƯỚC startTerm (rAF chạy sau vòng render này)
     t.wsPath = slot.dataset.ws || "";
     slot.appendChild(t.host);
-    requestAnimationFrame(() => {
-      if (!t.started) startTerm(t);
-      else fitTerm(t);
-    });
+    if (!t.started) requestAnimationFrame(() => { if (!t.started) startTerm(t); });
   }
+  // Rule: a terminal dies only when its slot left the DOM. Hidden windows keep their slot.
   for (const key of Object.keys(cvTerms)) if (!seen.has(key)) destroyTerm(key);
 }
 
@@ -2028,7 +1905,7 @@ function quickBtns(s, id) {
       `act('/api/sessions/${id}/skill/sync')`, ic("book", "sm")));
   if ((s.cwd || "").trim()) {
     b.push(btn("", "Edit this project's files", `openEditor('${id}')`, ic("edit", "sm")));
-    b.push(btn("", "Browse this project's folder on the canvas",
+    b.push(btn("", "Browse this project's folder beside the terminal",
                `openFolderCard('${id}')`, ic("folder", "sm")));
   }
   return b.join("");
@@ -2039,18 +1916,60 @@ function quickBtns(s, id) {
 // đông agent là thành một bức tường nút.
 let selSid = null;
 
+// Grid: tối đa bốn ô, vị trí cố định. Thiếu ô thì lấp bằng agent theo thứ tự danh sách.
+function gridTiles(st = cvLoad()) {
+  const ids = (cvLast.sessions || []).map((s) => s.id);
+  const tiles = (st.tiles || []).filter((id) => ids.includes(id)).slice(0, 4);
+  for (const id of ids) if (tiles.length < 4 && !tiles.includes(id)) tiles.push(id);
+  return tiles;
+}
+
+// Chọn agent (null/không còn = agent đầu tiên). Agent chưa có ô trong Grid thay ô chọn lâu nhất.
 function selectNode(sid) {
-  selSid = sid || null;
+  const ids = (cvLast.sessions || []).map((s) => s.id);
+  selSid = ids.includes(sid) ? sid : ids[0] || null;
+  if (selSid) {
+    const st = cvLoad(), seen = st.seen || {}, tiles = gridTiles(st);
+    if (!tiles.includes(selSid)) {
+      const lru = tiles.reduce((a, b) => ((seen[a] || 0) <= (seen[b] || 0) ? a : b));
+      tiles[tiles.indexOf(lru)] = selSid;
+    }
+    seen[selSid] = Date.now();
+    cvSave({ sel: selSid, tiles,
+             seen: Object.fromEntries(ids.filter((id) => seen[id]).map((id) => [id, seen[id]])) });
+  }
   renderInspector();
   markSelection();
 }
 window.selectNode = selectNode;
 
-// renderCanvas dựng lại innerHTML mỗi lần refresh → class .sel bay mất, phải gắn lại.
+// Bố cục, KHÔNG render lại: cửa sổ nào hiện, cửa sổ nào ẩn. Ẩn = visibility:hidden + inert (không
+// nhận phím, Tab không tới), vẫn nằm trong DOM với hộp thật nên terminal không bị fit về 0×0.
 function markSelection() {
-  for (const el of $("world").querySelectorAll(".node"))
-    el.classList.toggle("sel", !!selSid && el.dataset.nid === "s:" + selSid);
-  redrawMinimap();   // minimap tô sáng node đang chọn — .sel vừa đổi thì nó phải theo
+  const world = $("world"), grid = !!cvLoad().grid, tiles = grid ? gridTiles() : [];
+  world.classList.toggle("grid", grid);
+  world.dataset.n = Math.min(tiles.length, 3);   // 1 = cả khung · 2 = cạnh nhau · 3+ = 2×2
+  for (const el of world.querySelectorAll(".node")) {
+    const sid = el.dataset.nid.slice(2), at = tiles.indexOf(sid);
+    const shown = grid ? at >= 0 : sid === selSid;
+    el.classList.toggle("sel", sid === selSid);
+    el.classList.toggle("shown", shown);
+    el.inert = !shown;
+    el.style.order = Math.max(at, 0);
+    const comps = [...el.querySelectorAll(".comp")];
+    const pick = comps.find((c) => c.dataset.nid.startsWith((compSel[sid] || "") + ":")) || comps[0];
+    for (const c of comps) { c.classList.toggle("on", !grid && c === pick); c.inert = grid || c !== pick; }
+  }
+  for (const r of $("win-list").querySelectorAll(".win-row")) {
+    const [kind, sid] = [r.dataset.nid.split(":")[0], r.dataset.nid.slice(r.dataset.nid.indexOf(":") + 1)];
+    const on = sid === selSid && (kind === "s" || (!grid && world.querySelector(`.comp.on[data-nid="${CSS.escape(r.dataset.nid)}"]`)));
+    r.classList.toggle("on", !!on);
+    if (kind === "s" && on) r.setAttribute("aria-current", "true"); else r.removeAttribute("aria-current");
+  }
+  $("ag-mode").textContent = grid ? "Focus" : "Grid";
+  $("ag-mode").title = grid ? "Show only the selected agent, with its editor or folder"
+                            : "Show up to four agents side by side";
+  fitAll();
 }
 
 // Ngân sách ping-pong của vai này với từng peer (backend gửi kèm trong /api/sessions).
@@ -2295,195 +2214,8 @@ async function inspSend(e) {
 }
 window.inspSend = inspSend;
 
-// ── Zone (cwd) + orchestrator + chat ────────────────────────────────────────
-let cvPairOf = {};    // nid card editor → el card terminal của nó (xem snapPairs)
-let cvGroups = [];    // [{cwd, els:[nodeEl]}] — rebuild mỗi render; drag group đọc từ đây
-let cvNodeEls = {};   // session_id → node element (để vẽ edge)
-let cvEdges = [];     // [{from, to, cls}] resolve từ signal list
 let cvRuns = [];      // trang đầu của audit log — "Working now" ở inspector đọc run đang chạy từ đây
 let cvLast = { sessions: [], signals: [] };  // data mới nhất (re-render cục bộ không cần fetch)
-
-// Chỉ dùng cho <marker> đầu mũi tên. Đọc token thay vì hex cứng: dây vẽ bằng CSS
-// (.edge-wait/.edge-run) nên hardcode ở đây là dark mode có dây một màu, đầu mũi tên màu khác.
-const EDGE_COLORS = { wait: "var(--edge-wait)", run: "var(--edge-run)" };  // done/failed không vẽ mũi tên
-const EDGE_DEFS = "<defs>" + Object.entries(EDGE_COLORS).map(([k, c]) =>
-  `<marker id="ah-${k}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-     <path d="M0,0L8,4L0,8z" fill="${c}"/></marker>`).join("") + "</defs>";
-
-function zoneHtml(gi, cwd, list) {
-  const base = cwd.replace(/\/+$/, "").split("/").pop() || cwd;
-  return `<div class="node group-zone" data-nid="g:${esc(cwd)}" data-gi="${gi}">
-    <div class="zone-head">
-      <div class="zone-title">${ic("folder", "sm")} <b>${esc(base)}</b><span class="g-count">${list.length} agents</span>
-        <span class="g-path" title="${esc(cwd)}">${esc(cwd)}</span></div>
-    </div>
-  </div>`;
-}
-
-// Khung CẶP: terminal của một session + card editor của chính nó. Khác zone cwd ở chỗ nó có tay
-// nắm .rz — kéo góc là CẢ HAI card bên trong to/nhỏ theo cùng tỉ lệ (xem mode "gresize").
-// Hình học vẫn SUY RA từ member y như zone cwd: kéo giãn đổi member, layoutZones bo lại khung.
-// Không lưu riêng w/h cho khung → không có hai nguồn sự thật nào để lệch nhau.
-function pairZoneHtml(gi, s, parts) {
-  return `<div class="node group-zone pair-zone" data-nid="pair:${esc(s.id)}" data-gi="${gi}">
-    <div class="zone-head pair-head">
-      <div class="zone-title">${ic("terminal", "sm")}<b>${esc(s.name)}</b>
-        <span class="g-count">terminal + ${esc(parts.join(" + "))}</span></div>
-    </div>
-    <div class="rz" title="Drag to resize the whole group (double-click to reset both cards)"></div>
-  </div>`;
-}
-
-// ── Kéo giãn card trên canvas ────────────────────────────────────────────────
-// Kích thước lưu chung chỗ với vị trí (pos[nid] = {x, y, w, h}) → cùng workspace, cùng
-// localStorage, không thêm store thứ hai phải đồng bộ. Không có w/h = dùng size mặc định của CSS.
-// CHỈ card có "cửa sổ" bên trong mới kéo giãn được: card 👑 (terminal) và card VS Code (thư mục).
-// Card headless không có gì để giãn — nội dung là vài dòng meta, kéo to chỉ ra khoảng trống.
-// Guard theo data-rz thay vì chỉ ẩn tay nắm: session từng là 👑 rồi bị demote vẫn còn w/h trong
-// store, không chặn thì card headless bị kéo giãn theo size cũ.
-const RZ = `<div class="rz" title="Drag to resize the card (double-click to reset)"></div>`;
-const RZ_MIN = { w: 220, h: 130 };
-
-function applySize(el, p) {
-  if (p && p.w && p.h && el.dataset.rz) {
-    el.style.width = p.w + "px";
-    el.style.height = p.h + "px";
-    el.classList.add("sized");
-  } else {
-    el.style.width = el.style.height = "";
-    el.classList.remove("sized");
-  }
-}
-
-// Ghi vị trí + kích thước của 1 node vào store. MERGE chứ không ghi đè cả entry: kéo vị trí
-// không được xoá w/h, kéo giãn không được xoá x/y (cùng dùng chung pos[nid]).
-function saveNodeGeom(el, pos) {
-  const p = pos[el.dataset.nid] = { ...(pos[el.dataset.nid] || {}) };
-  // Editor đang dán cặp: x/y/h suy ra từ card terminal mỗi lần layout. Lưu lại là ghi một bản
-  // sao chỉ chờ lệch — và một mục x/y cũ sót trong store sẽ nhấp nháy ở khung hình đầu tiên.
-  if (cvPairOf[el.dataset.nid]) {
-    p.w = Math.round(parseFloat(el.style.width) || 0);
-    delete p.x; delete p.y; delete p.h;
-    return p;
-  }
-  p.x = parseFloat(el.style.left) || 0;
-  p.y = parseFloat(el.style.top) || 0;
-  // Node không kéo giãn được (card headless, zone): chỉ ghi vị trí. Xoá w/h ở đây thì size của
-  // card 👑 sẽ mất mỗi lần user kéo nó lúc đang headless — bật 👑 lại là về mặc định, không hiểu vì sao.
-  if (!el.dataset.rz) return p;
-  if (el.classList.contains("sized")) {
-    p.w = Math.round(parseFloat(el.style.width) || 0);
-    p.h = Math.round(parseFloat(el.style.height) || 0);
-  } else { delete p.w; delete p.h; }
-  return p;
-}
-
-// Terminal xterm KHÔNG tự biết khung đổi: phải fit lại, nếu không chữ giữ nguyên cols/rows cũ.
-function refitNode(el) {
-  const nid = el.dataset.nid || "";
-  // "s:<sid>" = card agent (key = sid) · "editor:<sid>" = card editor (key = "ed:"+sid)
-  const key = nid.startsWith("s:") ? nid.slice(2)
-    : nid.startsWith("editor:") ? "ed:" + nid.slice(7) : "";
-  const t = key && cvTerms[key];
-  if (t) fitTerm(t);
-}
-
-// Card editor DÁN vào cạnh phải card terminal của nó: cùng y, cùng chiều cao, KHÔNG khe hở.
-// Vị trí và chiều cao là SUY RA từ card terminal, không lưu vào store — nên không có cách nào
-// kéo nó rời ra, và cũng không có mục nào trong store để lệch pha với card terminal. Thứ duy
-// nhất của riêng nó là BỀ NGANG, tức tỉ lệ chia đôi bên trong khung.
-// Không dùng khe hở: người dùng muốn hai mép viền chạm nhau, đọc như một khối.
-function snapPairs() {
-  const world = $("world");
-  // Một card terminal có thể có HAI card dán vào: card editor và card thư mục (mở card thư mục ở
-  // chế độ thường rồi khởi động lại với --dev là ra đúng tình huống đó). Xếp NỐI TIẾP nhau, không
-  // cùng một mốc — cùng mốc là chúng chồng khít lên nhau và cái dưới coi như biến mất.
-  const byTerm = new Map();
-  for (const nid of Object.keys(cvPairOf)) {
-    const t = cvPairOf[nid];
-    if (!byTerm.has(t)) byTerm.set(t, []);
-    byTerm.get(t).push(nid);
-  }
-  for (const [term, nids] of byTerm) {
-    nids.sort();    // "editor:…" trước "folder:…" — thứ tự phải ổn định qua mọi lần render
-    let x = (parseFloat(term.style.left) || 0) + term.offsetWidth;
-    for (const nid of nids) {
-      const ed = world.querySelector(`.node[data-nid="${CSS.escape(nid)}"]`);
-      if (!ed || !term.isConnected) continue;
-      const w = parseFloat(ed.style.width) || term.offsetWidth;
-      // -1: chồng hai đường viền 1px lên nhau thành MỘT nét. Đặt sát 0 thì chỗ giáp là vạch 2px,
-      // nhìn ra ngay là hai card ghé cạnh nhau chứ không phải một khối.
-      ed.style.left = (x - 1) + "px";
-      ed.style.top = (parseFloat(term.style.top) || 0) + "px";
-      // xterm không tự biết khung đổi. Kéo tay nắm của CARD TERMINAL đổi chiều cao card editor
-      // qua đúng đường này, mà mode "resize" chỉ refit card đang kéo — không refit ở đây thì nvim
-      // giữ nguyên số dòng cũ trong một cái khung đã cao hơn.
-      const box = w + "px" + term.offsetHeight + "px";
-      const moved = ed.style.width + ed.style.height !== box;
-      ed.style.width = w + "px";
-      ed.style.height = term.offsetHeight + "px";
-      ed.classList.add("sized", "paired");
-      term.classList.add("pair-anchor");
-      if (moved) refitNode(ed);
-      x += w - 1;
-    }
-  }
-}
-
-// Zone tự bo quanh member: bbox các node member + header. Gọi sau mỗi lần đặt/kéo node.
-// Dán cặp TRƯỚC khi đo: mọi đường làm node đổi hình học đều đã gọi layoutZones, nên gắn ở đây
-// là card editor bám theo trong MỌI trường hợp — khỏi phải nhớ rải lời gọi khắp nơi.
-function layoutZones() {
-  snapPairs();
-  for (const z of $("world").querySelectorAll(".group-zone")) {
-    const g = cvGroups[+z.dataset.gi];
-    if (!g || !g.els.length) continue;
-    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-    for (const el of g.els) {
-      const x = parseFloat(el.style.left) || 0, y = parseFloat(el.style.top) || 0;
-      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-      x1 = Math.max(x1, x + el.offsetWidth); y1 = Math.max(y1, y + el.offsetHeight);
-    }
-    const headH = (z.querySelector(".zone-head") || {}).offsetHeight || 74;
-    // Khung cặp bo sát hơn zone cwd (10 vs 18): một session có cả editor lẫn ≥1 đồng nghiệp cùng
-    // cwd thì hai khung lồng nhau, cùng lề là hai đường viền chồng khít lên nhau, không đọc được
-    // cái nào trong cái nào. minW chỉ có nghĩa với zone cwd (card headless hẹp); cặp luôn rộng.
-    const pad = z.classList.contains("pair-zone") ? 10 : 18;
-    const minW = z.classList.contains("pair-zone") ? 0 : 400;
-    z.style.left = (x0 - pad) + "px";
-    z.style.top = (y0 - headH - (pad - 4)) + "px";
-    z.style.width = Math.max(x1 - x0 + pad * 2, minW) + "px";
-    z.style.height = (y1 - y0 + headH + (pad - 4) + pad) + "px";
-  }
-}
-
-// Điểm trên biên rect r theo hướng tới (tx,ty) — mũi tên chạm mép card thay vì chui vào giữa.
-function rectBorderPoint(r, tx, ty) {
-  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-  const dx = tx - cx, dy = ty - cy;
-  if (!dx && !dy) return { x: cx, y: cy };
-  const t = Math.min((r.w / 2) / Math.abs(dx || 1e-9), (r.h / 2) / Math.abs(dy || 1e-9));
-  return { x: cx + dx * t, y: cy + dy * t };
-}
-
-// Vẽ lại toàn bộ mũi tên signal theo vị trí node hiện tại (gọi cả trong lúc kéo).
-function redrawEdges() {
-  const svg = $("edges");
-  if (!svg) return;
-  const rect = (el) => ({ x: parseFloat(el.style.left) || 0, y: parseFloat(el.style.top) || 0,
-                          w: el.offsetWidth, h: el.offsetHeight });
-  let out = "";
-  for (const e of cvEdges) {
-    const a = cvNodeEls[e.from], b = cvNodeEls[e.to];
-    if (!a || !b) continue;
-    const ra = rect(a), rb = rect(b);
-    const p1 = rectBorderPoint(ra, rb.x + rb.w / 2, rb.y + rb.h / 2);
-    const p2 = rectBorderPoint(rb, ra.x + ra.w / 2, ra.y + ra.h / 2);
-    out += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" class="edge edge-${e.cls}${e.oneway ? " edge-oneway" : ""}" marker-end="url(#ah-${e.cls})"/>`;
-  }
-  svg.innerHTML = EDGE_DEFS + out;
-  redrawMinimap();   // gọi ở đây = mọi lần node đổi vị trí/kích thước/số lượng đều bắt được
-}
 
 // Signal pending chờ duyệt → card đích sáng "NEEDS YOU" (kiểu nodeterm). Strip chú ý dùng
 // chung hàm này để hai nơi không bao giờ đếm lệch nhau.
@@ -2518,401 +2250,60 @@ function renderAttn(sessions, signals) {
 
 function renderCanvas(sessions, signals) {
   cvLast = { sessions, signals };
-  if (cvInteracting) { cvPending = cvLast; return; }  // đừng phá thao tác kéo
   const world = $("world");
   $("cv-empty").hidden = sessions.length > 0;
-
   const needs = needsYou(signals);
-
   const st = cvLoad();
-  const pos = st.pos || {};
-
-  // Gom theo cwd: ≥2 agent chung cwd → zone bo quanh; member vẫn là node TỰ DO trên canvas.
-  const byCwd = new Map();
-  for (const s of sessions) {
-    const k = s.cwd || "";
-    if (!byCwd.has(k)) byCwd.set(k, []);
-    byCwd.get(k).push(s);
-  }
-  // CHỈ card của workspace NÀY: /api/editor trả mọi card đang mở của cả orchestrator, không có
-  // khái niệm workspace. Không lọc thì mở editor ở workspace này lại hiện card ở cả pane bên kia
-  // — tức là lộ cây mã nguồn sang tenant khác. `sessions` đã scope theo workspace của pane.
-  // Tính SỚM (trước zonesHtml) vì khung cặp cần biết session nào đang có editor.
-  const myEditors = editorCards.filter((c) => sessions.some((s) => s.id === c.session));
-  // Card thư mục đang mở của workspace này. Đọc SỚM vì khung cặp bên dưới phải biết session nào
-  // có card dán vào, và card thư mục cũng là một card dán vào.
   const openF = st.folders || {};
-  const edBySid = new Map();
-  for (const c of myEditors) edBySid.set(c.session, (edBySid.get(c.session) || 0) + 1);
-
-  cvGroups = [];
-  let zonesHtml = "", nodesHtml = "";
-  const nodeMeta = [];  // {sid, cwd, grouped, gi} theo thứ tự render
-  for (const [cwd, list] of byCwd) {
-    const grouped = !!cwd && list.length >= 2;
-    let gi = -1;
-    if (grouped) {
-      gi = cvGroups.length;
-      cvGroups.push({ cwd, els: [] });
-      zonesHtml += zoneHtml(gi, cwd, list);
-    }
-    for (const s of list) {
-      nodesHtml += `<div class="node" data-nid="s:${esc(s.id)}" data-rz="1">`
-                 + agentCard(s, needs.has(s.id)) + RZ + `</div>`;
-      nodeMeta.push({ sid: s.id, cwd, grouped, gi });
-    }
-  }
-  // Khung cặp đứng SAU zone cwd trong zonesHtml → vẽ đè lên trên nó, khung con nằm trong khung
-  // cha đúng thứ tự mắt nhìn. Chỉ session ĐANG có editor mới có khung: đóng editor là khung tan,
-  // terminal về lại card lẻ đúng chỗ cũ (hình học của member không hề bị khung đụng tới).
-  const pairGi = new Map();   // session_id → chỉ số trong cvGroups
-  for (const s of sessions) {
-    const n = edBySid.get(s.id) || 0;
-    const parts = [];
-    if (n) parts.push(n > 1 ? `${n} editors` : "editor");
-    if (openF[s.id] !== undefined) parts.push("folder");
-    if (!parts.length) continue;
-    const gi = cvGroups.length;
-    cvGroups.push({ cwd: s.cwd || "", els: [], pair: s.id });
-    pairGi.set(s.id, gi);
-    zonesHtml += pairZoneHtml(gi, s, parts);
-  }
-  // innerHTML rebuild sẽ detach t.host → textarea của xterm bị BLUR (mất focus giữa lúc gõ).
-  // Nhớ terminal nào đang giữ focus để trả lại sau khi attach (SSE re-render rất thường xuyên
-  // khi worker đang chạy — không nhớ là user gõ vài phím lại văng focus một lần).
+  // CHỈ card của workspace NÀY: /api/editor trả mọi card đang mở của cả orchestrator. Không lọc là
+  // lộ cây mã nguồn sang workspace khác.
+  const myEditors = editorCards.filter((c) => sessions.some((s) => s.id === c.session));
+  if (!sessions.some((s) => s.id === selSid))
+    selSid = (sessions.find((s) => s.id === st.sel) || sessions[0] || {}).id || null;
+  // innerHTML rebuild detach t.host → textarea của xterm bị BLUR. Nhớ terminal đang giữ focus để
+  // trả lại sau khi attach (SSE re-render rất thường xuyên khi worker đang chạy).
   const focusSid = Object.keys(cvTerms).find((sid) =>
     cvTerms[sid].host.contains(document.activeElement)) || null;
-  // Thứ tự vẽ: zone (dưới) → edges (giữa) → agent card (trên) → card editor (sau cùng).
-  // Card editor đi qua innerHTML như mọi card khác: ruột nó là .term-slot, mà host của xterm là
-  // một <div> sống ngoài chu trình render và được attachTerms cắm lại sau — chuyển <div> sang cha
-  // mới không mất gì. (Bản VS Code cũ phải giữ node ngoài innerHTML vì iframe đổi cha là tải lại.)
-  for (const c of myEditors)
-    nodesHtml += `<div class="node" data-nid="editor:${esc(c.session)}" data-rz="1">`
-               + editorCardHtml(c) + RZ + `</div>`;
-  // Card thư mục: node TỰ DO, có vị trí riêng trong store. KHÔNG dán vào card terminal như card
-  // editor — nó không phải nửa còn lại của một cặp, mở/đóng hoàn toàn độc lập.
-  const myFolders = sessions.filter((s) => openF[s.id] !== undefined);
-  for (const s of myFolders)
-    nodesHtml += `<div class="node" data-nid="folder:${esc(s.id)}" data-rz="1">`
-               + folderCardHtml(s) + RZ + `</div>`;
+  // MỌI session đều có card + .term-slot, kể cả card đang ẩn: slot rời DOM là attachTerms hủy terminal.
   world.replaceChildren();
-  world.insertAdjacentHTML("afterbegin",
-    zonesHtml + `<svg id="edges" class="edges"></svg>` + nodesHtml);
-
-  // Đặt vị trí agent: có lưu → dùng lại; mới → xếp cụm theo cwd (seed từ pos group cũ nếu có).
-  cvNodeEls = {};
-  const agentEls = world.querySelectorAll('.node[data-nid^="s:"]');
-  let cx = 40, cy = 40, rowH = 0;
-  const gcur = {};  // cwd → con trỏ xếp lưới cho member mới
-  // Bước lưới ĐO từ card thật, không phải số cứng: mọi card giờ là card terminal (~680px rộng),
-  // còn 300×130 ngày trước là cỡ card headless — giữ nguyên thì agent mới cùng cwd chồng lên nhau.
-  const GCOLS = 2;
-  const probe = agentEls[0];
-  const stepX = (probe ? probe.offsetWidth : 680) + 40;
-  const stepY = (probe ? probe.offsetHeight : 400) + 40;
-  const clusterW = stepX * GCOLS + 60;
-  nodeMeta.forEach((m, i) => {
-    const el = agentEls[i], nid = "s:" + m.sid;
-    cvNodeEls[m.sid] = el;
-    if (m.grouped) cvGroups[m.gi].els.push(el);
-    if (pairGi.has(m.sid)) cvGroups[pairGi.get(m.sid)].els.push(el);
-    if (!pos[nid]) {
-      if (m.grouped) {
-        let gc = gcur[m.cwd];
-        if (!gc) {
-          const old = pos["g:" + m.cwd];  // migrate: vị trí group-card kiểu cũ làm gốc cụm
-          if (old) gc = { x0: old.x + 20, y0: old.y + 90, i: 0 };
-          else {
-            if (cx > 40 && cx + clusterW > 40 + clusterW * 2) { cx = 40; cy += rowH + 80; rowH = 0; }
-            gc = { x0: cx, y0: cy + 80, i: 0 };
-            cx += clusterW;
-            // Chiều cao CẢ CỤM, không phải một card: lấy một bước thì card đơn xếp sau đó rơi
-            // đè lên hàng thứ hai của cụm (80 = chỗ cho zone-head phía trên).
-            rowH = Math.max(rowH, 80 + Math.ceil(byCwd.get(m.cwd).length / GCOLS) * stepY);
-          }
-          gcur[m.cwd] = gc;
-        }
-        pos[nid] = { x: gc.x0 + (gc.i % GCOLS) * stepX, y: gc.y0 + Math.floor(gc.i / GCOLS) * stepY };
-        gc.i++;
-      } else {
-        if (cx > 40 && cx + el.offsetWidth > 40 + stepX * GCOLS) { cx = 40; cy += rowH + 40; rowH = 0; }
-        pos[nid] = { x: cx, y: cy };
-        cx += el.offsetWidth + 40;
-        rowH = Math.max(rowH, el.offsetHeight);
-      }
-    }
-    el.style.left = pos[nid].x + "px";
-    el.style.top = pos[nid].y + "px";
-    applySize(el, pos[nid]);
-  });
-  // Card editor không còn hình học của riêng nó: snapPairs dán nó vào cạnh phải card terminal
-  // cùng session (xem hàm đó). Ở đây chỉ dựng sổ cặp + trả lại bề ngang đã lưu.
-  cvPairOf = {};
-  world.querySelectorAll('.node[data-nid^="editor:"]').forEach((vsEl, i) => {
-    const nid = vsEl.dataset.nid, sid = nid.slice(7);
-    const pgi = pairGi.get(sid);
-    if (pgi !== undefined) cvGroups[pgi].els.push(vsEl);
-    const term = cvNodeEls[sid];
-    if (!term) {
-      // Không có card terminal để dán vào (session biến mất giữa chừng): để nó tự do như cũ,
-      // còn hơn đặt vào goc (0,0) chồng lên mọi thứ.
-      if (!pos[nid]) pos[nid] = { x: 40 + i * 40, y: 40 + i * 40 };
-      vsEl.style.left = pos[nid].x + "px";
-      vsEl.style.top = pos[nid].y + "px";
-      applySize(vsEl, pos[nid]);
-      return;
-    }
-    cvPairOf[nid] = term;
-    // Chưa lưu bề ngang → snapPairs lấy đúng bằng bề ngang card terminal, tức chia đôi khung.
-    if (pos[nid] && pos[nid].w) vsEl.style.width = pos[nid].w + "px";
-  });
-  // Card thư mục DÁN vào cạnh phải card terminal của chính session, y như card editor: vị trí và
-  // chiều cao là SUY RA (snapPairs), không lưu vào store (saveNodeGeom xoá x/y/h của node đã dán).
-  // Thứ duy nhất của riêng nó là bề ngang — tỉ lệ chia đôi bên trong khung cặp.
-  world.querySelectorAll('.node[data-nid^="folder:"]').forEach((el, i) => {
-    const nid = el.dataset.nid, sid = nid.slice(7);
-    const pgi = pairGi.get(sid);
-    if (pgi !== undefined) cvGroups[pgi].els.push(el);
-    if (!folderList[sid] && !folderPrev[sid]) folderGo(sid, openF[sid] || "");
-    const term = cvNodeEls[sid];
-    if (!term) {
-      // Không có card terminal để dán vào (session biến mất giữa chừng): để nó tự do, còn hơn
-      // đặt vào goc (0,0) chồng lên mọi thứ.
-      if (!pos[nid]) pos[nid] = { x: 40 + 40 * (i + 1), y: 40 + 40 * (i + 1) };
-      el.style.left = pos[nid].x + "px";
-      el.style.top = pos[nid].y + "px";
-      applySize(el, pos[nid]);
-      return;
-    }
-    cvPairOf[nid] = term;
-    // Chưa lưu bề ngang → snapPairs lấy đúng bằng bề ngang card terminal, tức chia đôi khung.
-    if (pos[nid] && pos[nid].w) el.style.width = pos[nid].w + "px";
-  });
-  cvSave({ pos });
-  layoutZones();
-
-  // Mũi tên signal: CHỈ vẽ task ĐANG hoạt động (chạy/chờ) — done/failed ẩn, xem ở History.
-  // Resolve from/to về session id (nhận cả id lẫn name), dedup theo cặp (chạy > chờ).
-  const byId = {}, byName = {};
-  for (const s of sessions) { byId[s.id] = s.id; byName[s.name] = s.id; }
-  const pairBest = new Map();
-  for (const sg of signals || []) {
-    const from = byId[sg.from_session] || byName[sg.from_session];
-    const to = byId[sg.to_session] || byName[sg.to_session];
-    if (!from || !to || from === to) continue;
-    const cls = sg.status === "processing" ? "run"
-      : (sg.status === "pending" || sg.status === "approved") ? "wait" : null;
-    if (!cls) continue;
-    const key = from + "→" + to;
-    if (!pairBest.has(key) || cls === "run")
-      pairBest.set(key, { from, to, cls, oneway: sg.expects_reply === 0 });
-  }
-  cvEdges = [...pairBest.values()];
-  redrawEdges();
-  renderWinBar();      // danh sách cửa sổ đổi theo session 👑 và card editor
+  world.insertAdjacentHTML("afterbegin", sessions.map((s) => {
+    const comps = myEditors.filter((c) => c.session === s.id).map((c) =>
+      `<div class="comp" data-nid="editor:${esc(c.session)}">${editorCardHtml(c)}</div>`);
+    if (openF[s.id] !== undefined)
+      comps.push(`<div class="comp" data-nid="folder:${esc(s.id)}">${folderCardHtml(s)}</div>`);
+    return `<div class="node${comps.length ? " has-comp" : ""}" data-nid="s:${esc(s.id)}">`
+      + agentCard(s, needs.has(s.id)) + (comps.length ? `<div class="comps">${comps.join("")}</div>` : "")
+      + `</div>`;
+  }).join(""));
+  for (const s of sessions)
+    if (openF[s.id] !== undefined && !folderList[s.id] && !folderPrev[s.id]) folderGo(s.id, openF[s.id] || "");
+  renderWinList();
   renderInspector();   // dữ liệu vừa đổi → panel bên phải phải theo
-  markSelection();     // innerHTML rebuild xoá .sel, gắn lại
-  attachTerms();  // cắm terminal bền vào card 👑 (sau khi node đã vào DOM)
-  // Trả focus cho terminal đang gõ dở (rAF: sau khi attachTerms đã cắm host vào slot mới).
+  markSelection();     // innerHTML rebuild xoá .sel/.shown/inert, gắn lại TRƯỚC khi terminal khởi động
+  attachTerms();
   if (focusSid && cvTerms[focusSid])
     requestAnimationFrame(() => { const t = cvTerms[focusSid]; if (t && t.term) t.term.focus(); });
-
-  // Đổi workspace (hoặc lần đầu) → nạp view đã lưu, chưa có thì fit.
-  if (cvWs !== currentWS) {
-    cvWs = currentWS;
-    if (st.view) { CV = st.view; applyView(); } else cvFit();
-  } else applyView();
 }
 
-// Pan (kéo nền) / zoom (wheel, quanh con trỏ) / kéo card (header) / kéo zone-head (cả cụm).
-// Gắn 1 lần lúc load.
+// Gắn 1 lần lúc load. #world không bị dựng lại, chỉ con của nó, nên listener ủy quyền ở đây.
 function cvInit() {
-  const cv = $("canvas");
-  // Một listener cho MỌI card thư mục: card bị dựng lại sau mỗi innerHTML của #world, nhưng
-  // #world thì không — cắm ở đây là không phải cắm lại sau từng render (xem folderClick).
-  $("world").addEventListener("click", folderClick);
-  let drag = null;  // {mode:'pan'|'node'|'group', ...}
-  cv.addEventListener("pointerdown", (e) => {
+  const world = $("world");
+  world.addEventListener("click", folderClick);
+  // Bấm vào card (header hay thân) = chọn agent đó. Nút/ô chọn bên trong tự lo việc của nó.
+  world.addEventListener("click", (e) => {
     if (e.target.closest("button, select, input, textarea, option")) return;
-    if (e.target.closest(".cv-overlay")) return;  // overlay toolbar-hint: không pan/kéo
-    // Tay nắm resize phải xét TRƯỚC .node-head: nó nằm ngoài header nên nhánh dưới sẽ coi là
-    // click nền rồi return, không kéo giãn được.
-    const rz = e.target.closest(".rz");
-    if (rz) {
-      const n = rz.closest(".node");
-      // Tay nắm của KHUNG cặp: kéo một góc, cả hai card bên trong giãn theo cùng tỉ lệ. Mốc là
-      // bbox của member (không phải rect của khung — khung có header + lề, lấy nó làm mốc thì
-      // card đầu tiên trượt lên trên ngay cú kéo đầu).
-      if (n.classList.contains("group-zone")) {
-        const g = cvGroups[+n.dataset.gi] || { els: [] };
-        const parts = g.els.map((el) => ({
-          el, ox: parseFloat(el.style.left) || 0, oy: parseFloat(el.style.top) || 0,
-          ow: el.offsetWidth, oh: el.offsetHeight }));
-        if (parts.length) {
-          const x0 = Math.min(...parts.map((q) => q.ox)), y0 = Math.min(...parts.map((q) => q.oy));
-          const box = { x: x0, y: y0,
-                        w: Math.max(1, Math.max(...parts.map((q) => q.ox + q.ow)) - x0),
-                        h: Math.max(1, Math.max(...parts.map((q) => q.oy + q.oh)) - y0) };
-          drag = { mode: "gresize", el: n, box, parts, sx: e.clientX, sy: e.clientY };
-          cvInteracting = true;
-          cv.classList.add("grabbing");
-          cv.setPointerCapture(e.pointerId);
-        }
-        return;
-      }
-      drag = { mode: "resize", el: n, sx: e.clientX, sy: e.clientY,
-               ow: n.offsetWidth, oh: n.offsetHeight };
-      cvInteracting = true;
-      cv.classList.add("grabbing");
-      cv.setPointerCapture(e.pointerId);
-      return;
-    }
-    const head = e.target.closest(".node-head, .zone-head");
-    const node = head && head.closest(".node");
-    if (node && node.classList.contains("group-zone")) {
-      // Kéo header 📁 → di chuyển cả cụm member (zone tự bo theo).
-      const g = cvGroups[+node.dataset.gi] || { els: [] };
-      drag = { mode: "group", sx: e.clientX, sy: e.clientY,
-               parts: g.els.map((el) => ({ el, ox: parseFloat(el.style.left) || 0,
-                                           oy: parseFloat(el.style.top) || 0 })) };
-    } else if (node) {
-      // Card editor trong cặp không có vị trí riêng để kéo. Nắm header nó = nắm card terminal
-      // (editor dán theo trong layoutZones) → cả cặp đi cùng nhau, không tách ra được.
-      const anchor = cvPairOf[node.dataset.nid] || node;
-      drag = { mode: "node", el: anchor, nid: anchor.dataset.nid, sx: e.clientX, sy: e.clientY,
-               ox: parseFloat(anchor.style.left) || 0, oy: parseFloat(anchor.style.top) || 0,
-               onName: !!e.target.closest(".node-head > b") };
-    } else if (!e.target.closest(".node")) {
-      drag = { mode: "pan", sx: e.clientX, sy: e.clientY, ox: CV.tx, oy: CV.ty };
-    } else return;
-    cvInteracting = true;
-    cv.classList.add("grabbing");
-    cv.setPointerCapture(e.pointerId);
+    const card = e.target.closest(".agent-card[data-sid]");
+    if (card && card.dataset.sid !== selSid) selectNode(card.dataset.sid);
   });
-  cv.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    // Không còn giữ nút nào mà `drag` vẫn còn = cú pointerup đã lạc mất (nhả ngoài cửa sổ, mất
-    // pointer capture…). Không chốt chỗ này thì chỉ rê chuột qua canvas là khung nhìn tự chạy —
-    // đúng triệu chứng "hover là tự dời vùng hiển thị".
-    if (!e.buttons) return up();
-    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;  // phân biệt click vs kéo
-    if (drag.mode === "pan") { CV.tx = drag.ox + dx; CV.ty = drag.oy + dy; applyView(); return; }
-    if (drag.mode === "gresize") {
-      // Một hệ số cho mỗi trục, áp cho CẢ khoảng cách tới mốc LẪN kích thước card → khe hở giữa
-      // hai card giãn cùng nhịp, bố cục bên trong giữ nguyên tỉ lệ. Sàn 0.25 để kéo ngược qua
-      // mốc không lật card sang số âm.
-      const kx = Math.max(0.25, (drag.box.w + dx / CV.k) / drag.box.w);
-      const ky = Math.max(0.25, (drag.box.h + dy / CV.k) / drag.box.h);
-      for (const q of drag.parts) {
-        q.el.style.left = (drag.box.x + (q.ox - drag.box.x) * kx) + "px";
-        q.el.style.top = (drag.box.y + (q.oy - drag.box.y) * ky) + "px";
-        applySize(q.el, { w: Math.max(RZ_MIN.w, q.ow * kx), h: Math.max(RZ_MIN.h, q.oh * ky) });
-        refitNode(q.el);
-      }
-      layoutZones(); redrawEdges();
-      return;
-    }
-    if (drag.mode === "resize") {
-      // chia CV.k: chuột đi 1px màn hình = 1/k px trong toạ độ world (canvas đang zoom)
-      applySize(drag.el, { w: Math.max(RZ_MIN.w, drag.ow + dx / CV.k),
-                           h: Math.max(RZ_MIN.h, drag.oh + dy / CV.k) });
-      refitNode(drag.el);
-      layoutZones(); redrawEdges();
-      return;
-    }
-    if (drag.mode === "node") {
-      drag.el.style.left = (drag.ox + dx / CV.k) + "px";
-      drag.el.style.top = (drag.oy + dy / CV.k) + "px";
-    } else {
-      for (const p of drag.parts) {
-        p.el.style.left = (p.ox + dx / CV.k) + "px";
-        p.el.style.top = (p.oy + dy / CV.k) + "px";
-      }
-    }
-    layoutZones(); redrawEdges();  // zone bo theo + mũi tên bám node ngay khi kéo
+  // Gõ vào terminal của một ô Grid = chọn ô đó (xterm nuốt click, focus thì không).
+  world.addEventListener("focusin", (e) => {
+    const n = e.target.closest(".node");
+    if (n && n.dataset.nid.slice(2) !== selSid) selectNode(n.dataset.nid.slice(2));
   });
-  const up = () => {
-    if (!drag) return;
-    if (drag.mode === "node" || drag.mode === "group" || drag.mode === "resize"
-        || drag.mode === "gresize") {
-      const pos = cvLoad().pos || {};
-      const save = (el) => saveNodeGeom(el, pos);
-      // group/gresize đổi hình học của MỌI member → lưu từng cái; khung tự suy ra, không lưu.
-      if (drag.mode === "group" || drag.mode === "gresize") drag.parts.forEach((p) => save(p.el));
-      else save(drag.el);
-      cvSave({ pos });
-    } else cvSave({ view: CV });
-    // Click (không kéo) vào header card agent → CHỌN card (inspector mở bên phải).
-    // Trước đây click mở thẳng drawer transcript; giờ transcript là một nút trong inspector.
-    if (drag.mode === "node" && !drag.moved) {
-      const card = drag.el.querySelector(".agent-card");
-      if (card && card.dataset.sid) {
-        selectNode(card.dataset.sid);
-        // Bấm đúp lên TÊN = đổi tên. Không dùng ondblclick: setPointerCapture ở pointerdown
-        // retarget mọi event chuột về canvas, handler gắn trên tên không bao giờ chạy.
-        const now = performance.now(), last = cvInit._nameAt, sid = card.dataset.sid;
-        cvInit._nameAt = drag.onName ? { sid, t: now } : null;
-        if (drag.onName && last && last.sid === sid && now - last.t < 400) {
-          cvInit._nameAt = null;
-          setTimeout(() => renameCard(sid));   // sau khi up() dọn xong trạng thái kéo
-        }
-      }
-    }
-    // Click nền (pan mà không kéo) → bỏ chọn.
-    if (drag.mode === "pan" && !drag.moved) selectNode(null);
-    drag = null; cvInteracting = false;
-    cv.classList.remove("grabbing");
-    if (cvPending) { const p = cvPending; cvPending = null; renderCanvas(p.sessions, p.signals); }
-  };
-  cv.addEventListener("pointerup", up);
-  cv.addEventListener("pointercancel", up);
-  // Double-click tay nắm → bỏ size tùy chỉnh, về mặc định của CSS. Không dùng e.target:
-  // setPointerCapture ở pointerdown retarget dblclick về canvas (đã đo trên Chrome).
-  cv.addEventListener("dblclick", (e) => {
-    const rz = document.elementFromPoint(e.clientX, e.clientY)?.closest(".rz");
-    if (!rz) return;
-    const el = rz.closest(".node");
-    const pos = cvLoad().pos || {};
-    // Tay nắm của khung → trả MỌI card bên trong về cỡ mặc định, không phải riêng một cái.
-    const els = el.classList.contains("group-zone")
-      ? (cvGroups[+el.dataset.gi] || { els: [] }).els : [el];
-    for (const n of els) {
-      applySize(n, null);
-      if (pos[n.dataset.nid]) { delete pos[n.dataset.nid].w; delete pos[n.dataset.nid].h; }
-      refitNode(n);
-    }
-    cvSave({ pos });
-    layoutZones(); redrawEdges();
+  world.addEventListener("dblclick", (e) => {
+    const card = e.target.closest(".node-head > b") && e.target.closest(".agent-card[data-sid]");
+    if (card) renameCard(card.dataset.sid);
   });
-  // Click vào THÂN card (ngoài header — header đi đường pointerup ở trên) → chọn card.
-  // Card 👑: terminal (.term-slot) miễn trừ.
-  cv.addEventListener("click", (e) => {
-    if (e.target.closest("button, select, input, textarea, option, .term-slot, .node-head, .zone-head")) return;
-    const card = e.target.closest(".agent-card");
-    if (card && card.dataset.sid) selectNode(card.dataset.sid);
-  });
-  // capture: true — BẮT BUỘC, không phải cho gọn. xterm tự gắn handler wheel lên chính phần tử
-  // terminal, và Shift+wheel với nó là "cuộn nhanh" (fastScrollSensitivity). Nghe ở pha nổi bọt
-  // thì tới lượt mình buffer đã cuộn mất rồi. Pha capture đi từ gốc xuống nên canvas thấy trước,
-  // chặn lại là xterm không bao giờ nhận.
-  cv.addEventListener("wheel", (e) => {
-    // Shift+wheel = zoom ở MỌI CHỖ, kể cả khi con trỏ đang nằm trên terminal. Card phủ kín canvas
-    // thì không còn mảng nền nào để lăn chuột — không có đường này là kẹt luôn, không zoom ra được.
-    // Wheel trơn giữ nguyên nghĩa cũ: trên nền = zoom, trong terminal/overlay = cuộn nội dung.
-    if (!e.shiftKey && e.target.closest(".term-slot, .fld-body, .cv-overlay")) return;
-    e.preventDefault();
-    e.stopPropagation();   // không cho xterm cuộn thêm một nhịp nữa dưới tay mình
-    // Shift+wheel: nhiều trình duyệt đổi trục, gửi deltaX và để deltaY = 0 (Chrome/Safari) —
-    // đọc mỗi deltaY là zoom đứng im dù bánh xe vẫn quay.
-    const d = e.deltaY || e.deltaX;
-    const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    const k2 = Math.min(1.6, Math.max(0.35, CV.k * Math.exp(-d * 0.0012)));
-    CV.tx = mx - (mx - CV.tx) * (k2 / CV.k);
-    CV.ty = my - (my - CV.ty) * (k2 / CV.k);
-    CV.k = k2; applyView();
-    clearTimeout(cvInit._t); cvInit._t = setTimeout(() => cvSave({ view: CV }), 300);
-  }, { passive: false, capture: true });
 }
 
 // ── Spawn form: picker dạng card (workspace / template / model) + duyệt thư mục ──
@@ -3457,7 +2848,7 @@ function perfPaint(d, page) {
   if (terms.length >= 5)
     tips.push(["amber", `${terms.length} agent terminals are open and use ${fmtMB(termRam)}. Each one is a whole Claude or agy app — close the ones you are not using.`]);
   if (sv.lag_ms > 250)
-    tips.push(["amber", `Donezo froze for ${sv.lag_ms} ms in the last minute — terminals and the canvas stutter while it does.`]);
+    tips.push(["amber", `Donezo froze for ${sv.lag_ms} ms in the last minute — terminals and the dashboard stutter while it does.`]);
   if (d.zombies)
     tips.push(["amber", `${d.zombies} finished processes were never cleaned up. Restart Donezo to clear them.`]);
   if (page.refreshes > 30) tips.push(["amber", `This page redrew ${page.refreshes} times in the last minute.`]);
@@ -3858,11 +3249,7 @@ function switchTab(name) {
   // lật luôn pane kia.
   try { localStorage.setItem("orch-tab." + currentWS, name); } catch { /* private mode */ }
   // Quay lại tab agents: xterm cần fit lại (lúc ẩn display:none đo được 0×0).
-  renderWinBar();
-  if (name === "agents") requestAnimationFrame(() => {
-    if (cvFitPending) cvFit();
-    Object.values(cvTerms).forEach(fitTerm);
-  });
+  if (name === "agents") fitAll();
 }
 window.switchTab = switchTab;
 
@@ -5122,7 +4509,6 @@ if (PANE) {
   $("ws-detail-view").hidden = false;
   $("hdr-ws").hidden = false;
   cvInit();
-  mmInit();
   // ?tab= thắng trạng thái đã lưu: mọi màn của dashboard đều phải mở lại được bằng một URL.
   try { switchTab(qs.get("tab") || localStorage.getItem("orch-tab." + currentWS) || "agents"); }
   catch { /* tab mặc định */ }
@@ -5132,7 +4518,7 @@ if (PANE) {
     if (e.origin !== location.origin) return;
     const m = e.data || {};
     if (m.t === "show") {
-      requestAnimationFrame(() => Object.values(cvTerms).forEach(fitTerm));
+      fitAll();
       if (refreshDirty) scheduleRefresh();   // lúc ẩn đã bỏ qua refresh
     }
     else if (m.t === "theme") applyTheme(m.pref);

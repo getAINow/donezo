@@ -109,56 +109,34 @@ if "/u-n,(t.clientY-s.top)/d-o]" not in XTERM:
 check("the vendored xterm keeps its mouse-coordinate patch", missing,
       "re-apply it after upgrading xterm, or selection breaks at every zoom level except 100%")
 
-# 7 · Card editor bị KHOÁ vào cạnh phải card terminal: vị trí + chiều cao là suy ra, không lưu.
-# Ba mảnh phải đi cùng nhau, thiếu một là hỏng im lặng — thiếu snapPairs thì card nằm ở (0,0);
-# thiếu lời gọi trong layoutZones thì nó đứng yên trong lúc kéo rồi mới nhảy về chỗ; thiếu chốt
-# trong saveNodeGeom thì store còn x/y cũ và card nhấp một cái ở khung hình đầu mỗi lần render.
-lost = set()
-if "function snapPairs(" not in JS:
-    lost.add("snapPairs() — the function that glues the editor to its terminal")
-if "function layoutZones() {\n  snapPairs();" not in JS:
-    lost.add("layoutZones() must call snapPairs() first, or the editor lags every drag")
-if "cvPairOf[el.dataset.nid]" not in JS:
-    lost.add("saveNodeGeom must drop x/y/h for a paired editor (they are derived)")
-if "cvPairOf[node.dataset.nid] || node" not in JS:
-    lost.add("pointerdown must redirect a paired editor's drag to its terminal card")
-if "byTerm" not in JS or "nids.sort()" not in JS:
-    lost.add("snapPairs must lay several paired cards out in a ROW: an editor and a folder card "
-             "on the same terminal would otherwise land on the exact same spot")
-check("cards paired to a terminal are locked to it", lost,
-      "a paired card has no geometry of its own; only the pair moves")
-
-# 8 · Khung cặp (terminal + editor của cùng session) phải kéo giãn được. .group-zone là
-# pointer-events:none, nên tay nắm .rz bên trong nó CHẾT nếu CSS không bật lại — trên màn hình
-# khung vẫn vẽ ra, góc vẫn có tam giác, kéo thì không có gì xảy ra. Đúng kiểu hỏng im lặng.
+# 7 · Terminal sống qua mọi lần đổi cửa sổ. attachTerms hủy terminal của key không còn slot trong DOM,
+# nên luật là: MỌI session render card + slot của nó, đang hiện hay không; ẩn = class/inert, không
+# phải bỏ khỏi DOM. Hỏng im lặng: chỉ render card đang chọn là đổi cửa sổ = đóng WebSocket, mất scrollback.
 gaps = set()
-if ".pair-zone .rz" not in style or "pointer-events: auto" not in style.split(".pair-zone .rz", 1)[1][:80]:
-    gaps.add(".pair-zone .rz needs pointer-events:auto (the zone itself is pointer-events:none)")
-if 'class="node group-zone pair-zone"' not in JS:
-    gaps.add("pairZoneHtml must keep both group-zone (layout/drag) and pair-zone (style) classes")
-if '"gresize"' not in JS:
-    gaps.add("the pointerdown/pointermove branch that scales every member of the group")
-check("the pair frame can be dragged and resized", gaps,
-      "resizing the frame is the whole point of grouping the two cards")
+_at = JS[JS.index("function attachTerms()"):JS.index("function fillSignalForm(")]
+if "if (!seen.has(key)) destroyTerm(key)" not in _at:
+    gaps.add("attachTerms must destroy a terminal only when its key has no slot left in the DOM")
+if re.search(r"inert|\.shown|selSid|visibility|hidden", _at):
+    gaps.add("attachTerms must not look at whether a window is shown: hidden is not gone")
+_rc = JS[JS.index("function renderCanvas("):JS.index("function cvInit(")]
+if 'sessions.map((s) =>' not in _rc or re.search(r"sessions\.filter\([^)]*selSid", _rc):
+    gaps.add("renderCanvas must render a card for EVERY session, not only the selected one")
+if "el.inert = !shown" not in JS or '.node { position: absolute; inset: 0;' not in style:
+    gaps.add("a hidden window stays in the DOM, stacked with a real size, inert so it gets no keys")
+_ft = JS[JS.index("function fitTerm("):JS.index("function destroyTerm(")]
+if 'closest("[inert]")' not in _ft or "c < 2 || r < 2" not in _ft:
+    gaps.add("fitTerm must skip hidden windows and never send a resize under 2 cols/rows")
+if "new ResizeObserver(" not in JS or "function scheduleFit(t)" not in JS:
+    gaps.add("one debounced fit path: a ResizeObserver on the terminal host calls scheduleFit")
+check("hiding a window never kills or resizes its terminal", gaps,
+      "a terminal dies only when its slot leaves the DOM; every session keeps its slot")
 
-# 9 · Shift+wheel phải zoom được kể cả khi con trỏ nằm trên terminal — đó là đường DUY NHẤT để
-# zoom khi một card phủ kín canvas. Hai mảnh dễ bị "dọn cho gọn" mà hỏng im lặng:
-#   - bỏ capture:true → xterm nhận wheel trước, Shift+wheel với nó là cuộn nhanh, nên terminal
-#     vừa cuộn vừa zoom một lúc;
-#   - rút `e.deltaY || e.deltaX` về mỗi deltaY → Chrome/Safari đổi trục khi giữ Shift (deltaY=0),
-#     bánh xe quay mà mức zoom đứng im.
-wheel = JS[JS.index('cv.addEventListener("wheel"'):][:1400]
-gaps = set()
-if "capture: true" not in wheel:
-    gaps.add("capture:true — without it xterm fast-scrolls under the zoom")
-if "e.deltaY || e.deltaX" not in wheel:
-    gaps.add("e.deltaY || e.deltaX — browsers move shift+wheel onto the X axis")
-if "!e.shiftKey && e.target.closest" not in wheel:
-    gaps.add("the shift bypass of the .term-slot guard")
-if "stopPropagation" not in wheel:
-    gaps.add("stopPropagation — the terminal would still scroll a notch")
-check("shift+wheel zooms even over a terminal", gaps,
-      "a card covering the canvas leaves no background to scroll on")
+# 8 · Canvas tự do (pan, zoom, kéo, giãn, minimap, mũi tên, thanh chip) đã bỏ hẳn: bố cục cố định.
+gaps = set(re.findall(r"\b(?:cvZoom|cvFit|applyView|snapPairs|layoutZones|applySize|refitNode|saveNodeGeom"
+                      r"|redrawMinimap|mmInit|redrawEdges|renderWinBar)\b|win-chips|cv-toolbar|id=\"minimap\"",
+                      JS + HTML))
+check("the free canvas stays gone", gaps,
+      "the workspace page is a fixed layout: focus or grid, a window list and the inspector")
 
 # 10 · Màn Home dùng MỘT grid cho hai tầng (group / workspace của group). Hỏng im lặng ở đây là
 # lọc bị bỏ đi: grid lại liệt kê MỌI workspace (hoặc sidebar thành một danh sách phẳng), trông vẫn chạy, nhưng group thành
@@ -241,24 +219,18 @@ if 'addEventListener("click", folderClick)' not in JS:
 if "data-fcrumb" not in JS or "folderCrumbHtml(sid)" not in JS:
     gaps.add("folderPaint must redraw the breadcrumb: it sits in the header, outside .fld-body, "
              "so painting only the body leaves the path stuck at the project root")
-if '".term-slot, .fld-body, .cv-overlay"' not in JS:
-    gaps.add(".fld-body in the wheel guard — scrolling the list would zoom the canvas instead")
 if ".fld-body" not in style or "overflow: auto" not in style:
     gaps.add(".fld-body { overflow: auto } — a long listing would have no way to scroll")
 if '"/api/folder/list"' not in JS and "/api/folder/list?session=" not in JS:
     gaps.add("the call to /api/folder/list — the card has nothing to draw without it")
 if "window.openFolder = openFolder" not in JS:
     gaps.add("openFolder stays exported — the card header offers the OS file manager as a way out")
-# Dán cặp: ba mảnh, thiếu một là hỏng im lặng — không đăng ký thì card trôi tự do; không có
-# .sized thì danh sách giữ 340px trong một khung cao hơn và chừa mảng trống; không có .paired thì
-# chỗ giáp hai card hở ra hai đường bo.
-if "cvPairOf[nid] = term;" not in JS:
-    gaps.add("the folder node must register in cvPairOf, or it is not glued to its terminal")
-if ".node.sized > .folder-card" not in style or ".node.sized .folder-card .fld-body" not in style:
-    gaps.add(".node.sized rules for .folder-card — its height is derived, the list must fill it")
-if ".node.paired > .folder-card" not in style:
-    gaps.add(".node.paired > .folder-card — the seam needs square corners, not two curves")
-check("the folder card browses and scrolls inside the canvas", gaps,
+# Companion: card thư mục nằm cạnh terminal của chính session, ăn hết chiều cao của khung.
+if '<div class="comp" data-nid="folder:' not in JS:
+    gaps.add("the folder card renders as a companion of its agent's card")
+if ".comp .folder-card .fld-body" not in style:
+    gaps.add(".comp .folder-card .fld-body — the list must fill the companion's height")
+check("the folder card browses and scrolls beside its terminal", gaps,
       "it replaced a window that opened outside the orchestrator")
 
 # 14 · Form spawn phải đi HAI bước: group rồi mới workspace. Hỏng im lặng theo hai kiểu:
@@ -311,13 +283,15 @@ if "({ ws, sg, t, n }) => n" not in _pi or 'openTeam(ws, "board")' not in _pi:
 check("the palette survives a waiting proposal", gaps,
       "a row with no sg and no t crashes palRender and leaves the list empty")
 
-# 16 · Chip trên thanh cửa sổ đưa canvas tới card; tính năng ghim cửa sổ đã bỏ hẳn. Regex chỉ bắt tên
+# 16 · Hàng trong danh sách cửa sổ hiện cửa sổ đó qua focusNode; ghim cửa sổ đã bỏ hẳn. Regex chỉ bắt tên
 # của tính năng đó: ghim HỘI THOẠI (resume_id, biến `pinned` trong danh sách phiên) dùng chữ khác.
 gaps = set(re.findall(r'pinWindow|unpinWindow|applyPin|pinnedNid|rzw|\.pinned\b|"pinned"', JS + HTML))
-if not re.search(r'''class="win-chip[^>]*onclick="focusNode\('\$\{esc\(w\.nid\)\}'\)"''', JS):
-    gaps.add("the window-bar chip's onclick must be focusNode(w.nid)")
-check("window chips jump to the card, window pinning stays gone", gaps,
-      "a chip goes through focusNode; no second navigation or pin state")
+if not re.search(r'''class="win-row[^>]*onclick="focusNode\('\$\{esc\(w\.nid\)\}'\)"''', JS):
+    gaps.add("the window-list row's onclick must be focusNode(w.nid)")
+if 'aria-current' not in JS or 'id="win-list"' not in HTML:
+    gaps.add("#win-list rows mark the selected one with aria-current")
+check("window-list rows show the window, window pinning stays gone", gaps,
+      "a row goes through focusNode; no second navigation or pin state")
 
 # 17 · Ô tìm card và Studio đã bỏ hẳn. Sót mảnh nào là hỏng im lặng: một nút bấm không có gì xảy
 # ra, hoặc một lời gọi tới route server không còn. Thứ còn lại: focusNode + chip, lối vào trang
@@ -327,25 +301,14 @@ pat = (r'cv-find|find-pop|find-row|\b(?:findOpen|findFilter|findClose|findHold|f
        r'|\b(?:img|snd|sed|tts|lib)(?:[A-Z]\w*)\b|id="(?:img|snd|sed|tts|lib)-[\w-]+"'
        r'|/api/(?:images|sounds|tts)|/v1/images|\bi-(?:music|speak|library|image)\b')
 gaps = set(re.findall(pat, JS + HTML))
-if "window.focusNode = focusNode" not in JS or 'id="win-chips"' not in HTML:
-    gaps.add("focusNode and the window-bar chips stay: chips, Show and the palette use them")
+if "window.focusNode = focusNode" not in JS or 'id="win-list"' not in HTML:
+    gaps.add("focusNode and the window list stay: rows, Show and the palette use them")
 if 'const SUBS = { settings: [' not in JS:
     gaps.add("Settings must be the only full-screen page: SUBS is what openPage trusts")
 if "if (view && !SUBS[view]) { ACTIVE = -1; shellSave(); }" not in JS:
     gaps.add("a stale ?view=studio or stored shell state must land on Home")
 check("the find box and Studio stay gone", gaps,
       "both were removed on purpose; plugins will bring such features back, not leftovers")
-
-# 18 · Double-click tay nắm: setPointerCapture ở pointerdown retarget dblclick về canvas (đã đo trên
-# Chrome), nên e.target.closest(".rz") luôn null và tooltip "double-click to reset" thành nói dối.
-gaps = set()
-dbl = JS[JS.index('cv.addEventListener("dblclick"'):][:300]
-if "e.target" in dbl:
-    gaps.add("the dblclick handler must not rely on e.target")
-if "document.elementFromPoint(e.clientX, e.clientY)" not in dbl:
-    gaps.add("the dblclick handler must find the handle with elementFromPoint")
-check("double-clicking a resize handle finds the handle under the pointer", gaps,
-      "pointer capture sends the dblclick to the canvas")
 
 # 19 · Dismiss gọi route discard, mà có worktree thì discard xoá luôn nhánh: chỉ hàng không có worktree
 # mới được có nút này. Hàng đang kiểm lại nằm chung homeInbox: một nguồn cho danh sách, badge, nhãn card.
