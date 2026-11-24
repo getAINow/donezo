@@ -1940,6 +1940,7 @@ function selectNode(sid) {
   }
   renderInspector();
   markSelection();
+  renderSigMap();
 }
 window.selectNode = selectNode;
 
@@ -2248,6 +2249,108 @@ function renderAttn(sessions, signals) {
     }).join("");
 }
 
+// Signal map: ai đang nhắn ai. Một hàm vẽ cho cả bản nhỏ ở cột phải lẫn bản lớn trong dialog.
+// Mũi tên = cặp agent có signal đang đi (queued/approved/processing) hoặc chờ người dùng duyệt;
+// nhiều signal cùng cặp gộp một mũi tên, chờ duyệt thắng. Đầu kia không phải agent (user, team) → bỏ.
+function sigEdges(sessions, signals) {
+  const byId = {}, byName = {};
+  for (const s of sessions) { byId[s.id] = s.id; byName[s.name] = s.id; }
+  const pair = new Map();
+  for (const sg of signals || []) {
+    const from = byId[sg.from_session] || byName[sg.from_session];
+    const to = byId[sg.to_session] || byName[sg.to_session];
+    if (!from || !to || from === to) continue;
+    const cls = sg.requires_approval && sg.status === "pending" ? "wait"
+      : ["pending", "approved", "processing"].includes(sg.status) ? "run" : null;
+    if (cls && (!pair.has(from + ">" + to) || cls === "wait")) pair.set(from + ">" + to, { from, to, cls });
+  }
+  return [...pair.values()];
+}
+
+function sigMapSvg(sessions, edges, big) {
+  const [W, H, rx, ry, r] = big ? [600, 360, 230, 135, 11] : [300, 112, 118, 36, 6];
+  const n = sessions.length, pos = {}, sfx = big ? "b" : "s";
+  sessions.forEach((s, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n;   // thứ tự danh sách: vị trí không nhảy giữa các lần refresh
+    pos[s.id] = [W / 2 + rx * Math.cos(a), H / 2 + ry * Math.sin(a)];
+  });
+  const lines = edges.map((e) => {
+    const [x1, y1] = pos[e.from], [x2, y2] = pos[e.to], d = Math.hypot(x2 - x1, y2 - y1) || 1;
+    const ux = (x2 - x1) / d, uy = (y2 - y1) / d, o = big ? 5 : 3;   // lệch sang phải: A→B và B→A không chồng nhau
+    const p = (x, y, k) => [(x + ux * k - uy * o).toFixed(1), (y + uy * k + ux * o).toFixed(1)];
+    const [ax, ay] = p(x1, y1, r + 3), [bx, by] = p(x2, y2, -(r + 4));
+    return `<line class="sm-e ${e.cls}" data-pair="${esc(e.from)}>${esc(e.to)}" x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}"
+      marker-end="url(#sm-${e.cls}-${sfx})"/>`;
+  }).join("");
+  const dots = sessions.map((s) => {
+    const [x, y] = pos[s.id], name = s.name || s.id, short = name.length > 14 ? name.slice(0, 13) + "…" : name;
+    const ly = y < H / 2 ? y - r - 6 : y + r + (big ? 16 : 11);
+    return `<g class="sm-n${s.id === selSid ? " sel" : ""}" data-sid="${esc(s.id)}"${big
+      ? ` role="button" tabindex="0" aria-label="Show ${esc(name)}"` : ""}>
+      <title>${esc(name)} · ${esc(s.status || "")}</title>
+      ${s.id === selSid ? `<circle class="sm-ring" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r + 4}"/>` : ""}
+      <circle class="sm-dot st-${esc(s.status)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}"/>
+      <text x="${x.toFixed(1)}" y="${ly.toFixed(1)}">${esc(big ? name : short)}</text></g>`;
+  }).join("");
+  const mk = (c) => `<marker id="sm-${c}-${sfx}" class="sm-m ${c}" viewBox="0 0 10 10" refX="8" refY="5"
+    markerWidth="${big ? 7 : 5}" markerHeight="${big ? 7 : 5}" orient="auto"><path d="M0 0L10 5L0 10z"/></marker>`;
+  return `<svg class="sm-svg" viewBox="0 0 ${W} ${H}" aria-hidden="${!big}" focusable="false">
+    <defs>${mk("run")}${mk("wait")}</defs>${lines}${dots}</svg>`;
+}
+
+const SIG_WORDS = { pending: "queued", approved: "approved, not delivered yet", processing: "in progress",
+                    done: "done", failed: "failed", denied: "denied", blocked: "blocked", expired: "expired" };
+let smKey = {};   // khung → chuỗi đã vẽ: giống thì không đụng DOM, hoạt ảnh mũi tên không chạy lại
+function smPut(id, html) { if (smKey[id] !== html) { smKey[id] = html; $(id).innerHTML = html; } }
+
+function renderSigMap() {
+  const { sessions = [], signals = [] } = cvLast;
+  const btn = $("sig-map");
+  btn.hidden = sessions.length < 2;
+  if (btn.hidden) { if (!$("sm-modal").hidden) smClose(false); return; }
+  const edges = sigEdges(sessions, signals), w = edges.filter((e) => e.cls === "wait").length;
+  const cap = !edges.length ? "No messages in flight"
+    : [edges.length - w && `${edges.length - w} in flight`, w && `${w} waiting for you`].filter(Boolean).join(" · ");
+  smPut("sig-map", sigMapSvg(sessions, edges, false) + `<span class="sm-cap${w ? " need" : ""}">${cap}</span>`);
+  if ($("sm-modal").hidden) return;
+  smPut("sm-big", sigMapSvg(sessions, edges, true));
+  const ref = (v) => { const s = sessions.find((x) => x.id === v || x.name === v);
+    return s ? `<button type="button" class="link sm-who" data-sid="${esc(s.id)}">${esc(s.name)}</button>`
+             : `<span class="sm-who">${esc(v || "you")}</span>`; };
+  const recent = [...signals].sort((a, b) => b.id - a.id).slice(0, 20);
+  smPut("sm-list", recent.length ? recent.map((sg) => {
+    const wait = sg.requires_approval && sg.status === "pending";
+    return `<li class="sm-row${wait ? " wait" : ""}">${ref(sg.from_session)} → ${ref(sg.to_session)}
+      <span class="sm-st">${wait ? "waiting for your approval" : esc(SIG_WORDS[sg.status] || sg.status)}</span>
+      <span class="sm-age" title="${esc(sg.created_at)}">${ago(sg.created_at)}</span></li>`;
+  }).join("") : `<li class="side-empty">No messages yet.</li>`);
+}
+
+function smOpen() {
+  $("sm-modal").hidden = false;
+  renderSigMap();
+  $("sm-close").focus();
+}
+function smClose(back = true) {
+  $("sm-modal").hidden = true;
+  smKey["sm-big"] = smKey["sm-list"] = null;
+  if (back) $("sig-map").focus();
+}
+// Dialog: bấm chấm hay tên agent = đóng rồi hiện cửa sổ agent đó; Tab quẩn trong dialog.
+function smModalEvent(e) {
+  const t = e.target.closest("[data-sid]");
+  if (e.type === "keydown" && e.key === "Tab") {
+    const f = [...$("sm-modal").querySelectorAll("button, [tabindex='0']")];
+    const i = f.indexOf(document.activeElement), j = e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i + 1) % f.length;
+    e.preventDefault(); f[j].focus();
+  } else if (t && (e.type === "click" || e.key === "Enter" || e.key === " ")) {
+    e.preventDefault();
+    smClose(false);
+    focusNode("s:" + t.dataset.sid);
+  }
+}
+window.smOpen = smOpen; window.smClose = smClose; window.smModalEvent = smModalEvent;
+
 function renderCanvas(sessions, signals) {
   cvLast = { sessions, signals };
   const world = $("world");
@@ -2278,6 +2381,7 @@ function renderCanvas(sessions, signals) {
   for (const s of sessions)
     if (openF[s.id] !== undefined && !folderList[s.id] && !folderPrev[s.id]) folderGo(s.id, openF[s.id] || "");
   renderWinList();
+  renderSigMap();
   renderInspector();   // dữ liệu vừa đổi → panel bên phải phải theo
   markSelection();     // innerHTML rebuild xoá .sel/.shown/inert, gắn lại TRƯỚC khi terminal khởi động
   attachTerms();
@@ -2729,6 +2833,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("bd-modal").hidden) boardClose();
   if (e.key === "Escape" && !$("busy-modal").hidden) busyClose();
   if (e.key === "Escape" && !$("pb-modal").hidden) pbClose();
+  if (e.key === "Escape" && !$("sm-modal").hidden) smClose();
 });
 
 // Nút trong danh sách: tên đi qua data-attribute, không qua inline onclick.

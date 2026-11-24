@@ -628,6 +628,23 @@ if "apply: true" not in ap or "toast(" not in ap:
 check("Update playbook previews, escapes headings and skips team sessions", gaps,
       "preview first, esc on every heading, no button on sub-agents/verifiers")
 
+# Signal map: sits between the window list and the inspector, opens the bigger view, a dot goes to focusNode.
+gaps = set()
+side = HTML[HTML.find('id="win-list"'):HTML.find('id="inspector"')]
+if 'id="sig-map"' not in side or 'onclick="smOpen()"' not in side or "aria-label=" not in side:
+    gaps.add("#sig-map must be a button with an aria-label between #win-list and #inspector, opening smOpen()")
+if 'id="sm-modal" class="modal-overlay"' not in HTML or '!$("sm-modal").hidden) smClose()' not in JS:
+    gaps.add("#sm-modal must use the modal-overlay pattern and close on Escape")
+ev = JS[JS.find("function smModalEvent("):JS.find("window.smOpen")]
+if 'focusNode("s:" + t.dataset.sid)' not in ev or "smClose(false)" not in ev:
+    gaps.add("a dot or name in the bigger view closes it and calls focusNode")
+if "renderSigMap();" not in JS[JS.find("function renderCanvas("):JS.find("function cvInit(")]:
+    gaps.add("renderCanvas must update the map on every refresh")
+if "if (smKey[id] !== html)" not in JS or "prefers-reduced-motion: reduce) {\n    .sm-e.run" not in HTML:
+    gaps.add("the map must skip unchanged redraws (animation would restart) and stop moving under reduced motion")
+check("signal map opens the bigger view, dots go to focusNode", gaps,
+      "map button between list and inspector, dialog in the modal pattern, no restart on refresh")
+
 # Needs you shows the server's calendar day by default; older rows sit behind a toggle that survives re-render.
 gaps = set()
 import subprocess
