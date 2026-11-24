@@ -53,6 +53,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
+    hookspath=["pyi_hooks"],  # local hooks outrank pyinstaller-hooks-contrib (see pyi_hooks/)
     # pkg_resources/setuptools: KHÔNG code nào ở đây dùng (đã kiểm cả uvicorn, starlette, httpx,
     # mcp, anyio, websockets — không cái nào import). Nhưng chỉ cần nó lọt vào bundle là
     # PyInstaller gắn runtime hook pyi_rth_pkgres, hook đó import pkg_resources → jaraco.text →
