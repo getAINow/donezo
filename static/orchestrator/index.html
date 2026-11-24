@@ -24,7 +24,8 @@
     var root = document.documentElement, mq = matchMedia("(max-width: 900px)");
     var narrow = function () { root.classList.toggle("narrow", mq.matches); };
     narrow(); mq.addEventListener("change", narrow);
-    try { root.classList.toggle("sb-collapsed", localStorage.getItem("orch-sb-collapsed") === "1"); }
+    try { root.classList.toggle("sb-collapsed", localStorage.getItem("orch-sb-collapsed") === "1");
+      root.classList.toggle("side-collapsed", localStorage.getItem("orch-side-collapsed") === "1"); }
     catch (e) { /* private mode */ }
   })();
 </script>
@@ -939,7 +940,7 @@
   .sm-cap { display: block; font-size: 11px; color: var(--muted); }
   .sm-cap.need { color: var(--amber-ink); font-weight: 600; }
   .sm-svg text { font-size: 9px; fill: var(--muted); text-anchor: middle; font-family: var(--font); }
-  .sm-big .sm-svg text { font-size: 13px; fill: var(--text); font-weight: 550; }
+  .sm-big .sm-svg text { font-size: 11px; fill: var(--text); font-weight: 550; }
   .sm-dot { fill: var(--gray); stroke: var(--faint); stroke-width: 1; }
   .sm-dot.st-running { fill: var(--accent); } .sm-dot.st-paused { fill: var(--amber); } .sm-dot.st-stopped { fill: var(--red); }
   .sm-ring { fill: none; stroke: var(--accent); stroke-width: 2; }
@@ -954,24 +955,26 @@
     .sm-e.run { stroke-dasharray: none; animation: none; }
     .sm-e.wait { animation: none; }
   }
-  .modal.sm-m { width: min(760px, 100%); }
+  .modal.sm-m { width: min(1100px, 100%); }
   .sm-head { display: flex; align-items: center; gap: 8px; }
-  .sm-big .sm-svg { display: block; width: 100%; height: auto; max-height: 50vh; }
+  .sm-big .sm-svg { display: block; width: 100%; height: auto; max-height: calc(100vh - 140px); }
   .sm-big .sm-n { cursor: pointer; }
   .sm-big .sm-n:focus { outline: none; }
   .sm-big .sm-n:focus-visible .sm-dot, .sm-big .sm-n:hover .sm-dot { stroke: var(--text); stroke-width: 2.5; }
-  .sm-h { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
-  .sm-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px; }
-  .sm-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 5px 8px; border-radius: 6px; }
-  .sm-row.wait { background: var(--amber-soft); }
-  .sm-row.wait .sm-st { color: var(--amber-ink); font-weight: 650; }
-  .sm-who { font-weight: 600; color: var(--text); }
-  button.sm-who { height: auto; padding: 0; border: 0; background: none; font-size: inherit; text-decoration: underline;
-    text-underline-offset: 2px; text-decoration-color: var(--border-strong); }
-  .sm-st { color: var(--muted); }
-  .sm-age { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  /* Cột phải thu thành rail: chỉ còn chấm trạng thái của từng agent (+ dấu needs you). Không transition:
+     mỗi khung hình đổi bề rộng là một lần fit terminal. Dưới 800px nút Windows lo cột này. */
+  #side-toggle svg { transform: scaleX(-1); }
+  @media (min-width: 801px) {
+    .side-collapsed .ag-side { width: 52px; }
+    .side-collapsed .ag-side :is(#sig-map, #inspector, .win-row.ed, .win-name, .win-q, .win-empty) { display: none; }
+    .side-collapsed .win-list { flex: 1; max-height: none; border-bottom: 0; align-content: start; }
+    .side-collapsed .win-row { position: relative; justify-content: center; padding: 9px 0; }
+    .side-collapsed .win-row .needs-badge { position: absolute; top: 3px; right: 3px; width: 9px; height: 9px;
+      padding: 0; border-radius: 50%; font-size: 0; box-shadow: 0 0 0 2px var(--panel); }
+  }
   @media (max-width: 800px) {
     #ag-side-btn { display: inline-flex; align-items: center; }
+    #side-toggle { display: none; }
     .ag-side { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 100%);
       z-index: 5; box-shadow: var(--sh-3); }
     .ag-side.open { display: flex; }
@@ -1124,10 +1127,6 @@
   .insp-bar > div { height: 100%; border-radius: 3px; background: var(--green); }
   .insp-bar.hit > div { background: var(--red); }
   .insp-sec > button.warn { justify-self: start; }
-  .insp-compose { display: flex; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid var(--border); flex: none; }
-  .insp-compose input { flex: 1; min-width: 0; height: 40px; border-radius: 10px; background: var(--card); padding: 0 12px; }
-  .insp-compose .icon-btn.primary { width: 40px; height: 40px; border-radius: 10px; background: var(--accent);
-    color: var(--accent-fg); }
   /* minmax(0,1fr) + min-width:0 khắp nơi: grid/flex mặc định lấy content-width làm sàn,
      một session id dài là đủ đẩy cả panel tràn ngang và sinh scrollbar cho cả trang. */
   .insp-body { flex: 1; overflow-y: auto; padding: 16px; display: grid; gap: 18px;
@@ -1495,13 +1494,6 @@
             <button id="insp-tab-settings" role="tab" onclick="inspTab('settings')">Settings</button>
           </div>
           <div id="insp-body" class="insp-body"></div>
-          <!-- Ngoài #insp-body: body dựng lại mỗi lần refresh, chữ đang gõ ở đây không được mất. -->
-          <form class="insp-compose" onsubmit="inspSend(event)">
-            <label for="insp-msg" class="sr-only">Message this agent</label>
-            <input id="insp-msg" autocomplete="off" placeholder="Message…">
-            <button id="insp-send" class="primary icon-btn" type="submit" title="Send" aria-label="Send message">
-              <svg class="ic"><use href="#i-send"/></svg></button>
-          </form>
         </aside>
       </div>
       <div class="ag-main">
@@ -1510,6 +1502,9 @@
           <span class="spacer"></span>
           <button id="ag-side-btn" class="secondary" aria-controls="ag-side"
             onclick="document.getElementById('ag-side').classList.toggle('open')">Windows</button>
+          <button id="side-toggle" class="icon-btn" aria-controls="ag-side" onclick="toggleSide()"
+            title="Collapse the window list" aria-label="Collapse the window list" aria-expanded="true">
+            <svg class="ic"><use href="#i-sidebar"/></svg></button>
         </div>
         <div id="world" class="world"></div>
         <div id="cv-empty" class="cv-empty" hidden>No agents in this workspace yet.</div>
@@ -1867,15 +1862,13 @@
   </div>
 </div>
 
-<!-- Signal map lớn: cùng hình với bản nhỏ ở cột phải + các signal gần nhất. Bấm nền đóng. -->
+<!-- Signal map lớn: cùng hình với bản nhỏ ở cột phải, chiếm cả dialog. Bấm nền đóng. -->
 <div id="sm-modal" class="modal-overlay" hidden onclick="if (event.target === this) smClose()">
   <div class="modal form-card na sm-m" role="dialog" aria-modal="true" aria-labelledby="sm-title"
     onclick="smModalEvent(event)" onkeydown="smModalEvent(event)">
     <div class="sm-head"><h3 id="sm-title">Signal map</h3><span class="spacer"></span>
       <button type="button" id="sm-close" class="secondary" onclick="smClose()">Close</button></div>
     <div id="sm-big" class="sm-big"></div>
-    <h4 class="sm-h">Recent messages</h4>
-    <ol id="sm-list" class="sm-list"></ol>
   </div>
 </div>
 

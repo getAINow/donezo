@@ -93,11 +93,15 @@ window on the right.</p>
   <li><strong>Signal map:</strong> under the list, a small map shows every agent as a dot in its status colour and
     an arrow for each pair with a message on its way. A moving arrow is a message being delivered or worked on; a
     dashed amber arrow pulses until you approve or deny the message. Messages from you or the team draw no arrow.
-    Click the map, or press <kbd>Tab</kbd> to reach it and <kbd>↵</kbd>, for a bigger view with every agent's name
-    and the 20 most recent messages; click an agent there to show its card. The map is hidden in a workspace with one
-    agent.</li>
-  <li><strong>Inspector:</strong> under the map is everything else about the selected agent: model, effort, limits,
-    its team and a box to message it.</li>
+    Click the map, or press <kbd>Tab</kbd> to reach it and <kbd>↵</kbd>, for a bigger view of the same map with every
+    agent's name; click an agent there to show its card. The messages themselves are on the
+    <span class="ui">Activity</span> tab. The map is hidden in a workspace with one agent.</li>
+  <li><strong>Inspector:</strong> under the map is everything else about the selected agent: model, effort, limits
+    and its team. To talk to the agent, type into its terminal.</li>
+  <li><strong>Collapse:</strong> the sidebar button at the top right of the main area folds the right column into a
+    narrow rail, so the terminal gets the width. The rail keeps a status dot for every agent, marked when it needs
+    you; click a dot to show that agent. Click the button again to bring back the list, map and inspector. The choice
+    is remembered.</li>
   <li><strong>Small screens:</strong> below about 800 pixels the list and inspector open with the
     <span class="ui">Windows</span> button, so the terminal keeps the whole width.</li>
 </ul>
@@ -152,7 +156,7 @@ it; the old name keeps working for agents that remember it.</p>
   <li><span class="ui">Settings</span>: move the agent to another workspace, list and delete old sessions in its folder,
     and <span class="ui">Unregister</span> it.</li>
 </ul>
-<p>The box at the bottom sends the agent a message as a background run.</p>
+<p>To talk to the agent, type into its terminal.</p>
 
 <h2 id="editor">The editor</h2>
 <p>The editor button on an agent card opens that agent's project in a card beside its terminal: files on the left, tabs
@@ -294,7 +298,7 @@ reported to or answered whom (dashed); thicker means more messages. Thin dotted 
 to the memories and decisions its searches found. Hover an arrow or line for its latest messages or searches, hover a
 node for its details (an agent also lists its recent searches that found nothing), and drag it around; the tab
 never changes anything.</p>
-<p>You can message an agent too: use the box in its panel, or <span class="ui">Send a message</span> in
+<p>You can message an agent too: type into its terminal, or use <span class="ui">Send a message</span> in
 <a href="control.html#activity">Activity</a>.</p>
 
 <h2 id="palette">Command palette</h2>

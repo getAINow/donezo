@@ -642,8 +642,27 @@ if "renderSigMap();" not in JS[JS.find("function renderCanvas("):JS.find("functi
     gaps.add("renderCanvas must update the map on every refresh")
 if "if (smKey[id] !== html)" not in JS or "prefers-reduced-motion: reduce) {\n    .sm-e.run" not in HTML:
     gaps.add("the map must skip unchanged redraws (animation would restart) and stop moving under reduced motion")
+dlg = HTML[HTML.find('id="sm-modal"'):][:800]
+if "sm-list" in HTML + JS or "SIG_WORDS" in JS or "<ol" in dlg:
+    gaps.add("the dialog shows the graph only: the recent-messages list lives in the Activity tab")
+if "insp-msg" in HTML + JS or "inspSend" in HTML + JS:
+    gaps.add("the inspector has no message box: the user types into the terminal")
 check("signal map opens the bigger view, dots go to focusNode", gaps,
       "map button between list and inspector, dialog in the modal pattern, no restart on refresh")
+
+# Cột phải thu thành rail: nút có aria-expanded, nhớ qua reload, đặt trước paint, không đụng nút Windows <800px.
+gaps = set()
+if 'id="side-toggle"' not in HTML or "aria-expanded" not in HTML[HTML.find('id="side-toggle"'):][:300]:
+    gaps.add("#side-toggle button with aria-expanded is missing")
+if 'localStorage.setItem("orch-side-collapsed"' not in JS or 'getItem("orch-side-collapsed")' not in HTML:
+    gaps.add("the collapsed column must be saved under orch-side-collapsed and applied before first paint")
+narrow = HTML[HTML.find("#ag-side-btn { display: inline-flex"):][:200]
+if "#side-toggle { display: none; }" not in narrow or "@media (min-width: 801px) {\n    .side-collapsed .ag-side" not in HTML:
+    gaps.add("below 800px the Windows button is the only column control and the rail rules do not apply")
+if "side-collapsed" in JS[JS.find("function focusNode("):JS.find("window.focusNode")]:
+    gaps.add("selecting an agent must not expand the collapsed column")
+check("the right column collapses to a status-dot rail and remembers it", gaps,
+      "one toggle per width, state in localStorage, rail keeps a dot per agent")
 
 # Needs you shows the server's calendar day by default; older rows sit behind a toggle that survives re-render.
 gaps = set()
