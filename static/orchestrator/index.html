@@ -930,6 +930,46 @@
   .win-row.ed.on { color: var(--text); }
   .win-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .win-q { flex: none; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+  /* Signal map: chấm = agent (màu như .status-dot), mũi tên = signal đang đi / chờ duyệt. */
+  .sig-map { flex: none; display: block; width: 100%; height: auto; padding: 4px 8px 6px; border: 0;
+    border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--muted); text-align: center; }
+  .sig-map[hidden] { display: none; }
+  .sig-map:hover { background: var(--panel2); }
+  .sig-map .sm-svg { display: block; width: 100%; height: 112px; }
+  .sm-cap { display: block; font-size: 11px; color: var(--muted); }
+  .sm-cap.need { color: var(--amber-ink); font-weight: 600; }
+  .sm-svg text { font-size: 9px; fill: var(--muted); text-anchor: middle; font-family: var(--font); }
+  .sm-big .sm-svg text { font-size: 13px; fill: var(--text); font-weight: 550; }
+  .sm-dot { fill: var(--gray); stroke: var(--faint); stroke-width: 1; }
+  .sm-dot.st-running { fill: var(--accent); } .sm-dot.st-paused { fill: var(--amber); } .sm-dot.st-stopped { fill: var(--red); }
+  .sm-ring { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .sm-e { stroke-width: 1.6; fill: none; }
+  .sm-big .sm-e { stroke-width: 2.4; }
+  .sm-e.run { stroke: var(--accent); stroke-dasharray: 5 3; animation: sm-flow .9s linear infinite; }
+  .sm-e.wait { stroke: var(--amber); stroke-dasharray: 3 3; animation: sm-pulse 1.4s ease-in-out infinite alternate; }
+  .sm-m.run path { fill: var(--accent); } .sm-m.wait path { fill: var(--amber); }
+  @keyframes sm-flow { to { stroke-dashoffset: -8; } }
+  @keyframes sm-pulse { from { opacity: 1; } to { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) {
+    .sm-e.run { stroke-dasharray: none; animation: none; }
+    .sm-e.wait { animation: none; }
+  }
+  .modal.sm-m { width: min(760px, 100%); }
+  .sm-head { display: flex; align-items: center; gap: 8px; }
+  .sm-big .sm-svg { display: block; width: 100%; height: auto; max-height: 50vh; }
+  .sm-big .sm-n { cursor: pointer; }
+  .sm-big .sm-n:focus { outline: none; }
+  .sm-big .sm-n:focus-visible .sm-dot, .sm-big .sm-n:hover .sm-dot { stroke: var(--text); stroke-width: 2.5; }
+  .sm-h { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+  .sm-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12.5px; }
+  .sm-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 5px 8px; border-radius: 6px; }
+  .sm-row.wait { background: var(--amber-soft); }
+  .sm-row.wait .sm-st { color: var(--amber-ink); font-weight: 650; }
+  .sm-who { font-weight: 600; color: var(--text); }
+  button.sm-who { height: auto; padding: 0; border: 0; background: none; font-size: inherit; text-decoration: underline;
+    text-underline-offset: 2px; text-decoration-color: var(--border-strong); }
+  .sm-st { color: var(--muted); }
+  .sm-age { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; }
   @media (max-width: 800px) {
     #ag-side-btn { display: inline-flex; align-items: center; }
     .ag-side { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 100%);
@@ -1437,6 +1477,8 @@
     <div id="tab-agents">
       <div id="ag-side" class="ag-side">
         <nav id="win-list" class="win-list" aria-label="Windows"></nav>
+        <button id="sig-map" class="sig-map" type="button" onclick="smOpen()" hidden
+          aria-label="Signal map: which agent is messaging which. Open the bigger view"></button>
         <aside id="inspector" class="inspector" hidden>
           <div class="insp-head">
             <span id="insp-dot" class="status-dot"></span>
@@ -1822,6 +1864,18 @@
       <button type="button" class="secondary" onclick="pbClose()">Cancel</button>
       <button type="button" id="pb-ok" class="primary" onclick="pbApply()">Update</button>
     </div>
+  </div>
+</div>
+
+<!-- Signal map lớn: cùng hình với bản nhỏ ở cột phải + các signal gần nhất. Bấm nền đóng. -->
+<div id="sm-modal" class="modal-overlay" hidden onclick="if (event.target === this) smClose()">
+  <div class="modal form-card na sm-m" role="dialog" aria-modal="true" aria-labelledby="sm-title"
+    onclick="smModalEvent(event)" onkeydown="smModalEvent(event)">
+    <div class="sm-head"><h3 id="sm-title">Signal map</h3><span class="spacer"></span>
+      <button type="button" id="sm-close" class="secondary" onclick="smClose()">Close</button></div>
+    <div id="sm-big" class="sm-big"></div>
+    <h4 class="sm-h">Recent messages</h4>
+    <ol id="sm-list" class="sm-list"></ol>
   </div>
 </div>
 
