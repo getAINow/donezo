@@ -446,8 +446,10 @@ async def main():
     check("i) the role is the sub-agent's director", a["director_id"] == d1["id"], a["director_id"])
     w = WAIT.get(got["a"], {})
     check("i) it worked in a git worktree of the director's repo",
-          a["repo"] == str(REPO) and w.get("cwd") == a["worktree"] != str(REPO)
-          and Path(w.get("common", "")) == (REPO / ".git").resolve(), (a["repo"], w.get("cwd"), w.get("common")))
+          # resolved: git spells C:/Users/runneradmin, tempfile C:\Users\RUNNER~1 for the same dir
+          Path(a["repo"]).resolve() == REPO.resolve() and w.get("cwd") == a["worktree"]
+          and Path(a["worktree"]).resolve() != REPO.resolve()
+          and Path(w.get("common", "")).resolve() == (REPO / ".git").resolve(), (a["repo"], w.get("cwd"), w.get("common")))
     check("i) list_subagents and cancel_subagent work for the role",
           got["a"] in got["list"] and got["cancel_b"].startswith("Cancelled"), (got["list"], got["cancel_b"]))
     check("i) finish_step is refused while a sub-agent is active",
