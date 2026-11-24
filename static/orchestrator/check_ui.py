@@ -136,7 +136,11 @@ gaps = set(re.findall(r"\b(?:cvZoom|cvFit|applyView|snapPairs|layoutZones|applyS
                       r"|redrawMinimap|mmInit|redrawEdges|renderWinBar)\b|win-chips|cv-toolbar|id=\"minimap\"",
                       JS + HTML))
 check("the free canvas stays gone", gaps,
-      "the workspace page is a fixed layout: focus or grid, a window list and the inspector")
+      "the workspace page is a fixed layout: one agent, a window list and the inspector")
+
+# 8b · Grid (nhiều agent cạnh nhau) đã bỏ: chỉ một terminal tại một thời điểm.
+gaps = set(re.findall(r"\b(?:toggleGrid|gridTiles|ag-mode)\b|world\.grid", JS + HTML))
+check("the Grid view stays gone", gaps, "the Agents tab shows one agent's card; no Grid button or tile state")
 
 # 10 · Màn Home dùng MỘT grid cho hai tầng (group / workspace của group). Hỏng im lặng ở đây là
 # lọc bị bỏ đi: grid lại liệt kê MỌI workspace (hoặc sidebar thành một danh sách phẳng), trông vẫn chạy, nhưng group thành

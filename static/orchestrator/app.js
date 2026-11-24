@@ -1103,17 +1103,17 @@ function renderWsBanner() {
 function wsQuery() { return currentWS ? "?workspace_id=" + encodeURIComponent(currentWS) : ""; }
 
 // ── Agents: one fixed layout, no canvas ─────────────────────────────────────
-// Main area shows the selected agent's card (Focus) or up to four tiles (Grid); every other card
+// Main area shows the selected agent's card; every other card
 // stays in the DOM, stacked and hidden, so its terminal keeps its socket and its size. The right
-// column lists every window and holds the inspector. Store per workspace: sel, grid, tiles, seen,
-// folders (old pos/view entries are ignored).
+// column lists every window and holds the inspector. Store per workspace: sel,
+// folders (old pos/view/grid/tiles/seen entries are ignored and dropped on save).
 
 const cvStoreKey = () => "orch-canvas." + (currentWS || "default");
 function cvLoad() {
   try { return JSON.parse(localStorage.getItem(cvStoreKey())) || {}; } catch { return {}; }
 }
 function cvSave(patch) {
-  const { pos, view, ...st } = { ...cvLoad(), ...patch };   // pos/view: vị trí canvas cũ, bỏ đi
+  const { pos, view, grid, tiles, seen, ...st } = { ...cvLoad(), ...patch };   // khóa của bản cũ (canvas, Grid), bỏ đi
   try { localStorage.setItem(cvStoreKey(), JSON.stringify(st)); } catch { /* full/private mode */ }
 }
 
@@ -1168,10 +1168,7 @@ function focusNode(nid) {
   const i = nid.indexOf(":"), kind = nid.slice(0, i), sid = nid.slice(i + 1);
   const el = $("world").querySelector(`.node[data-nid="s:${CSS.escape(sid)}"]`);
   if (!el) return;
-  if (kind !== "s") {
-    compSel[sid] = kind;
-    if (cvLoad().grid) cvSave({ grid: false });   // Grid không hiện companion: cửa sổ vừa bấm phải hiện
-  }
+  if (kind !== "s") compSel[sid] = kind;
   selectNode(sid);
   if (matchMedia("(max-width: 800px)").matches) $("ag-side").classList.remove("open");
   // remove + đọc offsetWidth = ép reflow, không thì nháy lại đúng card đó sẽ không chạy.
@@ -1196,12 +1193,6 @@ function paneFocusTry() {
   focusNode("s:" + paneFocusSid);
   paneFocusSid = null;
 }
-
-function toggleGrid() {
-  cvSave({ grid: !cvLoad().grid });
-  markSelection();
-}
-window.toggleGrid = toggleGrid;
 
 // ── Terminal nhúng trong card 👑 (xterm.js ↔ /ws/terminal ↔ PTY claude --resume) ──
 // Element terminal sống NGOÀI chu trình innerHTML của canvas: tạo 1 lần per session,
@@ -1465,7 +1456,7 @@ function fitTerm(t, force) {
   t.ws.send(JSON.stringify({ t: "r", c, r }));
 }
 
-// Đường fit DUY NHẤT: hộp terminal đổi cỡ (resize cửa sổ, Grid, companion, cột phải, tab hiện lại)
+// Đường fit DUY NHẤT: hộp terminal đổi cỡ (resize cửa sổ, companion, cột phải, tab hiện lại)
 // → fit một lần sau khi loạt thay đổi lắng xuống.
 function scheduleFit(t) {
   clearTimeout(t.fitT);
@@ -1932,27 +1923,12 @@ function quickBtns(s, id) {
 // đông agent là thành một bức tường nút.
 let selSid = null;
 
-// Grid: tối đa bốn ô, vị trí cố định. Thiếu ô thì lấp bằng agent theo thứ tự danh sách.
-function gridTiles(st = cvLoad()) {
-  const ids = (cvLast.sessions || []).map((s) => s.id);
-  const tiles = (st.tiles || []).filter((id) => ids.includes(id)).slice(0, 4);
-  for (const id of ids) if (tiles.length < 4 && !tiles.includes(id)) tiles.push(id);
-  return tiles;
-}
-
-// Chọn agent (null/không còn = agent đầu tiên). Agent chưa có ô trong Grid thay ô chọn lâu nhất.
+// Chọn agent (null/không còn = agent đầu tiên). 
 function selectNode(sid) {
   const ids = (cvLast.sessions || []).map((s) => s.id);
   selSid = ids.includes(sid) ? sid : ids[0] || null;
   if (selSid) {
-    const st = cvLoad(), seen = st.seen || {}, tiles = gridTiles(st);
-    if (!tiles.includes(selSid)) {
-      const lru = tiles.reduce((a, b) => ((seen[a] || 0) <= (seen[b] || 0) ? a : b));
-      tiles[tiles.indexOf(lru)] = selSid;
-    }
-    seen[selSid] = Date.now();
-    cvSave({ sel: selSid, tiles,
-             seen: Object.fromEntries(ids.filter((id) => seen[id]).map((id) => [id, seen[id]])) });
+    cvSave({ sel: selSid });
   }
   renderInspector();
   markSelection();
@@ -1963,29 +1939,22 @@ window.selectNode = selectNode;
 // Bố cục, KHÔNG render lại: cửa sổ nào hiện, cửa sổ nào ẩn. Ẩn = visibility:hidden + inert (không
 // nhận phím, Tab không tới), vẫn nằm trong DOM với hộp thật nên terminal không bị fit về 0×0.
 function markSelection() {
-  const world = $("world"), grid = !!cvLoad().grid, tiles = grid ? gridTiles() : [];
-  world.classList.toggle("grid", grid);
-  world.dataset.n = Math.min(tiles.length, 3);   // 1 = cả khung · 2 = cạnh nhau · 3+ = 2×2
+  const world = $("world");
   for (const el of world.querySelectorAll(".node")) {
-    const sid = el.dataset.nid.slice(2), at = tiles.indexOf(sid);
-    const shown = grid ? at >= 0 : sid === selSid;
+    const sid = el.dataset.nid.slice(2), shown = sid === selSid;
     el.classList.toggle("sel", sid === selSid);
     el.classList.toggle("shown", shown);
     el.inert = !shown;
-    el.style.order = Math.max(at, 0);
     const comps = [...el.querySelectorAll(".comp")];
     const pick = comps.find((c) => c.dataset.nid.startsWith((compSel[sid] || "") + ":")) || comps[0];
-    for (const c of comps) { c.classList.toggle("on", !grid && c === pick); c.inert = grid || c !== pick; }
+    for (const c of comps) { c.classList.toggle("on", c === pick); c.inert = c !== pick; }
   }
   for (const r of $("win-list").querySelectorAll(".win-row")) {
     const [kind, sid] = [r.dataset.nid.split(":")[0], r.dataset.nid.slice(r.dataset.nid.indexOf(":") + 1)];
-    const on = sid === selSid && (kind === "s" || (!grid && world.querySelector(`.comp.on[data-nid="${CSS.escape(r.dataset.nid)}"]`)));
+    const on = sid === selSid && (kind === "s" || world.querySelector(`.comp.on[data-nid="${CSS.escape(r.dataset.nid)}"]`));
     r.classList.toggle("on", !!on);
     if (kind === "s" && on) r.setAttribute("aria-current", "true"); else r.removeAttribute("aria-current");
   }
-  $("ag-mode").textContent = grid ? "Focus" : "Grid";
-  $("ag-mode").title = grid ? "Show only the selected agent, with its editor or folder"
-                            : "Show up to four agents side by side";
   fitAll();
 }
 
@@ -2380,11 +2349,6 @@ function cvInit() {
     if (e.target.closest("button, select, input, textarea, option")) return;
     const card = e.target.closest(".agent-card[data-sid]");
     if (card && card.dataset.sid !== selSid) selectNode(card.dataset.sid);
-  });
-  // Gõ vào terminal của một ô Grid = chọn ô đó (xterm nuốt click, focus thì không).
-  world.addEventListener("focusin", (e) => {
-    const n = e.target.closest(".node");
-    if (n && n.dataset.nid.slice(2) !== selSid) selectNode(n.dataset.nid.slice(2));
   });
   world.addEventListener("dblclick", (e) => {
     const card = e.target.closest(".node-head > b") && e.target.closest(".agent-card[data-sid]");
