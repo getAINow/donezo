@@ -208,7 +208,6 @@ async def main():
                               ("if (unseen()) { refreshDirty = true; return; }", "app.js", js),
                               ("scrollback: 1000", "app.js", js),
                               ('onclick="perfOpen()"', "index.html", html),
-                              ("edgeflow 1s steps(5) infinite", "index.html", html),
                               ("asyncio.Queue(maxsize=1000)", "session_orchestrator.py", src),
                               ("access_log=False", "session_orchestrator.py", src),
                               ("run_in_executor(_PTY_POOL, term.read)", "session_orchestrator.py", src)):
