@@ -676,7 +676,7 @@ js = fnjs + """const f = (a, b) => isToday(a, b);
 console.log(JSON.stringify([f("2026-11-23T00:10:00", "2026-11-23T08:00:00"), f("2026-11-22T23:50:00", "2026-11-23T00:05:00"),
   f("2026-11-22T23:59:59", "2026-11-22T23:59:59"), f("2020-01-01T00:00:00", "")]));"""
 try:
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20, env={"TZ": "America/Los_Angeles", "PATH": __import__("os").environ.get("PATH", "")}).stdout.strip()
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20, env={**__import__("os").environ, "TZ": "America/Los_Angeles"}).stdout.strip()
     if out != "[true,false,true,true]":
         gaps.add(f"isToday must compare the server's date prefix (got {out!r})")
 except FileNotFoundError:

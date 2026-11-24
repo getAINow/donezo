@@ -234,7 +234,7 @@ async def main():
         r = await c.post(f"/api/sessions/{uuid.uuid4()}/playbook/update", json={"template": "agent"})
         check("unknown session is 404", r.status_code == 404, r.text)
 
-        written = sorted(str(p.relative_to(CWD)) for p in Path(CWD).rglob("*") if p.is_file())
+        written = sorted(p.relative_to(CWD).as_posix() for p in Path(CWD).rglob("*") if p.is_file())
         check("only the playbook copies and their backups were written",
               written == sorted(f"{r}/skills/dir/{f}" for r in so.CLI_SKILL_ROOTS
                                 for f in ("SKILL.md", "SKILL.md.bak")), written)
