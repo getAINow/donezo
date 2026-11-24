@@ -182,12 +182,6 @@
   .sb-new { display: flex; align-items: center; justify-content: center; gap: 8px; height: 40px;
     border-radius: 10px; white-space: nowrap; }
   .sb-tools { display: flex; gap: 4px; }
-  /* Chọn workspace cho từng pane, chỉ hiện khi đang split. */
-  .pane-pick { display: grid; gap: 6px; }
-  .pane-pick[hidden] { display: none; }
-  .pane-one { display: flex; align-items: center; gap: 6px; }
-  .pane-one > span { font-size: 10px; font-weight: 700; color: var(--faint); width: 12px; }
-  .pane-one select { flex: 1; min-width: 0; }
 
   /* Danh sách workspace theo group: MỌI group, mỗi group một tiêu đề nhỏ. Số pane vẫn tối đa 2 —
      dòng ở đây chỉ là chỗ bấm, pane mới là iframe tốn tài nguyên. */
@@ -199,9 +193,7 @@
   .ws-tab .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--gray); }
   .ws-tab.open { color: var(--text); }
   .ws-tab.open .dot { background: var(--accent); }
-  .ws-tab.active, .ws-tab.split-on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
-  .ws-tab .pane-tag { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
-    color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 3px; }
+  .ws-tab.active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
   .ws-tab .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ws-tab .x { display: flex; padding: 3px; border-radius: 5px; color: var(--faint); }
   .ws-tab .x:hover { background: var(--red-soft); color: var(--red); }
@@ -214,7 +206,7 @@
   .narrow:not(.sb-collapsed) .sidebar:is(:hover, :has(:focus-visible)) {
     width: 240px; margin-right: -180px; box-shadow: var(--sh-3); }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) :is(.sb-name, .sb-sec,
-    .sb-grp, #conn, #dry, .lbl, .x, .pane-tag, .sb-new span, .pane-pick, .sb-search .kbd) { display: none; }
+    .sb-grp, #conn, #dry, .lbl, .x, .sb-new span, .sb-search .kbd) { display: none; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .ws-tab { padding-left: 16px; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .sb-tools { flex-direction: column; }
 
@@ -541,13 +533,6 @@
   #panes[hidden] { display: none; }
   .pane { flex: 1; min-width: 0; border: 0; display: block; background: var(--canvas); }
   .pane[hidden] { display: none; }
-  .pane-split { flex: none; width: 6px; cursor: col-resize; background: var(--border);
-    position: relative; flex-shrink: 0; }
-  .pane-split::after { content: ""; position: absolute; inset: 0 -4px; }
-  .pane-split:hover, .pane-split.dragging { background: var(--accent); }
-  /* Kéo divider: iframe nuốt pointer event của chính nó → tắt trong lúc kéo, nếu không
-     con trỏ vào pane là mất luôn thao tác kéo. */
-  #panes.dragging .pane { pointer-events: none; }
   .panes-empty { flex: 1; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-style: italic; }
 
@@ -1274,7 +1259,6 @@
   <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a3 3 0 1 1 4.3 2.9c-.9.5-1.5 1.1-1.5 2.3M12 17.6h.01"/></symbol>
   <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M9 5v14"/></symbol>
-  <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></symbol>
   <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-map" viewBox="0 0 24 24"><path d="m9 4-6 3v13l6-3 6 3 6-3V4l-6 3z"/><path d="M9 4v13M15 7v13"/></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 17 4-5"/></symbol>
@@ -1318,12 +1302,9 @@
   <div id="ws-tabs" class="ws-tabs"></div>
   <div class="spacer"></div>
   <div class="sb-foot">
-    <div id="pane-pick" class="pane-pick" hidden></div>
     <button class="primary sb-new" onclick="newAgent()" title="New agent">
       <svg class="ic"><use href="#i-plus"/></svg><span>New agent</span></button>
     <div class="sb-tools">
-      <button id="split-btn" class="icon-btn" onclick="toggleSplit()" title="Side-by-side (needs 2 open workspaces)">
-        <svg class="ic"><use href="#i-split"/></svg></button>
       <button id="theme-btn" class="icon-btn" onclick="cycleTheme()" title="Theme">
         <svg class="ic"><use href="#i-theme"/></svg></button>
       <button id="sb-toggle" class="icon-btn" onclick="toggleSidebar()" title="Collapse sidebar"

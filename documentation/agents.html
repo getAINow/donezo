@@ -64,9 +64,8 @@ you move one across. A <em>group</em> is only a label that keeps workspaces tidy
   <li><strong>Create:</strong> <span class="ui">New workspace</span> and <span class="ui">New group</span> are on
     <span class="ui">Home</span>. The <span class="ui">Workspaces</span> heading in the sidebar has a plus button too.</li>
   <li><strong>Open:</strong> click a workspace in the sidebar or on <span class="ui">Home</span>.</li>
-  <li><strong>Side by side:</strong> open two workspaces, then press the split button at the bottom of the sidebar (its
-    tooltip reads <span class="ui">Side-by-side (needs 2 open workspaces)</span>). At most two are open at once;
-    opening a third replaces the one you are viewing.</li>
+  <li><strong>Switch:</strong> the two most recent workspaces stay loaded, so switching back is instant. Opening a
+    third replaces one that has no running agent. <span class="ui">Ctrl+K</span> lists every workspace too.</li>
   <li><strong>Rename or delete:</strong> use the pencil and trash buttons on a card on <span class="ui">Home</span>.
     Deleting a workspace unregisters its agents. It keeps runs, messages and records, and leaves the folder on disk alone.
     Deleting a group only moves its workspaces back to the default group.</li>
@@ -196,7 +195,7 @@ installed. Without one the editor still colours code by file type, and shows no 
 <h3 id="source-control">Source Control</h3>
 <p>The tabs at the top of the card switch between <span class="ui">Files</span> and
 <span class="ui">Source Control</span>. With one git repository, Source Control opens the diff straight away. A project can
-hold several repositories, side by side or one inside another. Then you get a list of each one with its branch and number
+hold several repositories, next to each other or one inside another. Then you get a list of each one with its branch and number
 of changes, and clean ones say <code>clean</code>. Repositories inside folders like <code>node_modules</code> are left out.</p>
 <figure>
   <img src="images/editor-git.png" width="1360" height="860" alt="Source Control in the editor card. A panel lists the backend repository on branch main with 3 changes and the web repository on branch feature/login with 1 change, each with its changed files and a status letter.">

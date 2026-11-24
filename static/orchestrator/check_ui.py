@@ -562,7 +562,7 @@ if 'id="sb-toggle"' not in HTML or "aria-expanded" not in HTML[HTML.find('id="sb
     gaps.add("#sb-toggle button with aria-expanded is missing from the sidebar")
 if 'localStorage.setItem("orch-sb-collapsed"' not in JS or 'getItem("orch-sb-collapsed")' not in HTML:
     gaps.add("the collapsed state must be saved under orch-sb-collapsed and applied before first paint")
-if HTML.count(".sb-new span, .pane-pick, .sb-search .kbd") != 1 or "sb-collapsed .sidebar" not in HTML:
+if HTML.count(".sb-new span, .sb-search .kbd") != 1 or "sb-collapsed .sidebar" not in HTML:
     gaps.add("the rail label-hiding rule must exist once and cover the collapsed class")
 check("the sidebar collapses to the shared icon rail and remembers it", gaps,
       "one toggle, one set of rail rules, one localStorage key")
@@ -577,8 +577,8 @@ if "const runningIn = (wsId)" not in JS or "const nRun = runningIn(w.id)" not in
 if "OPEN[ACTIVE] = id" in fn("selectWorkspace") or "runningIn(" not in fn("selectWorkspace") \
         or "busyOpen(" not in fn("selectWorkspace"):
     gaps.add("selectWorkspace must replace only an idle pane and show the busy dialog when both are busy")
-if "runningIn(OPEN[i])" not in fn("setPane") or "busyOpen(" not in fn("setPane"):
-    gaps.add("setPane must refuse to replace a pane whose workspace has a running agent")
+if "toggleSplit" in JS + HTML or 'id="split-btn"' in HTML or "SPLIT" in JS:
+    gaps.add("split view is gone: no toggleSplit, split button or SPLIT state may come back")
 if 'id="busy-modal" class="modal-overlay"' not in HTML or 'id="busy-ok"' not in HTML \
         or 'busyClose()' not in HTML[HTML.find('id="busy-modal"'):][:200] \
         or '!$("busy-modal").hidden) busyClose()' not in JS:
