@@ -74,6 +74,7 @@
   </ul>
   <h3>Changed</h3>
   <ul>
+    <li>The Canvas tab is now Agents: one agent fills the main area, <b>Grid</b> tiles up to four, and an editor or folder opens beside its terminal. A list on the right switches between windows; terminals that are not shown keep running.</li>
     <li>With two workspaces open, opening another one replaces a workspace that has no running agent. If both have running agents, nothing is closed and a dialog tells you to wait or stop its agents.</li>
     <li>A sub-agent can run Claude Sonnet 5.5 as well as Opus 5.5. The director picks the model per task; if it does not, low or medium effort runs on Sonnet 5.5 and high or xhigh on Opus 5.5. Verifiers still run Opus 5.5. The <a href="team.html">Team tab</a> shows each sub-agent's model next to its effort.</li>
     <li>A director can only be created in a folder that is a git repository with at least one commit. If the folder has none, the <a href="agents.html#new-agent">New agent</a> dialog offers <span class="ui">Set up git here</span>, which creates a local repository and commits the files in the folder. Nothing is uploaded. Existing directors are not affected.</li>
@@ -81,6 +82,7 @@
   </ul>
   <h3>Removed</h3>
   <ul>
+    <li>The free canvas: panning, zooming, dragging and resizing cards, the arrows between cards and the minimap.</li>
     <li>Side-by-side workspaces. One workspace shows at a time; the last two you opened stay loaded, and <kbd>Ctrl K</kbd> opens any workspace.</li>
   </ul>
   <h3>Fixed</h3>
