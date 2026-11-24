@@ -53,6 +53,35 @@ env = {**os.environ, "HOME": tmp, "USERPROFILE": tmp, "ORCH_PORT": str(PORT), "O
        "ORCH_DB": "check_shutdown", "ORCH_DRY_RUN": "1",
        "ORCH_WORKSPACES_ROOT": os.path.join(tmp, "ws"),
        "ORCH_CLAUDE_CONFIG": os.path.join(tmp, "claude.json")}
+
+# Race seen under load (~1/50): uvicorn's handler runs between any two bytecodes, so Ctrl-C can land
+# INSIDE Queue.get, after `while self.empty()` but before the getter is registered. A sentinel put
+# right there wakes nobody and the stream waits for the 5s force-close. Fire the hook exactly there.
+os.environ.update(env)
+sys.path.insert(0, str(HERE))
+import asyncio                          # noqa: E402
+import session_orchestrator as so       # noqa: E402
+
+
+async def _hook_inside_get():
+    q = asyncio.Queue()
+    so._subscribers.add((q, None))
+    real = q._get_loop
+
+    def landing():                      # Queue.get calls _get_loop() right after the empty() check
+        q._get_loop = real
+        so._stop_streams_soon()         # what _Server.handle_exit runs
+        return real()
+    q._get_loop = landing
+    return await asyncio.wait_for(q.get(), 2)
+
+try:
+    assert asyncio.run(_hook_inside_get()) is None
+except asyncio.TimeoutError:
+    raise AssertionError("Ctrl-C landing inside Queue.get lost the wake-up: the stream would wait "
+                         "for the graceful timeout") from None
+print("ok   Ctrl-C landing inside Queue.get still ends the stream")
+
 proc = subprocess.Popen([sys.executable, "session_orchestrator.py", "serve"], env=env, cwd=str(HERE),
                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                         creationflags=CREATION)

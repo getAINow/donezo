@@ -4767,6 +4767,20 @@ def _stop_streams():
             q.put_nowait(None)
         except Exception:  # noqa: BLE001
             pass
+
+
+def _stop_streams_soon():
+    """Gọi từ signal handler. uvicorn cài handler bằng signal.signal, nên nó chạy GIỮA hai bytecode
+    bất kỳ của loop — kể cả giữa `while self.empty()` và `_getters.append()` trong Queue.get. Đặt
+    sentinel ngay lúc đó thì không getter nào được đánh thức, stream treo tới timeout ép 5s (đo được:
+    ~1/50 lần dưới tải). Đẩy sang loop để _stop_streams chạy giữa hai callback, không bao giờ giữa
+    Queue.get."""
+    try:
+        asyncio.get_running_loop().call_soon_threadsafe(_stop_streams)
+    except RuntimeError:    # chưa/hết loop: không có stream nào để đánh thức
+        _stop_streams()
+
+
 def workspace_blocked(workspace_id):
     """Trả (True, reason) nếu workspace đang suspended. Workspace không tồn tại coi như không
     chặn (dữ liệu 'default' cũ / edge case)."""
@@ -7144,7 +7158,7 @@ def serve():
     # handle_exit cho 0.1s. Phải cắt stream NGAY khi nhận tín hiệu — handle_exit là móc đó.
     class _Server(uvicorn.Server):
         def handle_exit(self, sig, frame):
-            _stop_streams()
+            _stop_streams_soon()
             super().handle_exit(sig, frame)
 
     # timeout_graceful_shutdown giữ lại làm chốt chặn cuối: một response dở dang nào KHÁC cũng đủ
