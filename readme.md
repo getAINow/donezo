@@ -11,6 +11,8 @@ its own login and subscription.
 
 [Download](../../releases) · [Report a bug](../../issues/new) · [Documentation](https://getainow.github.io/donezo/)
 
+![Agents tab: a director and its agents, one terminal, the signal map and what waits on you](documentation/images/agents.png)
+
 ## How it works
 
 1. **Start a director** for a git repo (the New agent dialog can set one up). It is the one agent
