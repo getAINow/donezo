@@ -1106,7 +1106,7 @@ function wsQuery() { return currentWS ? "?workspace_id=" + encodeURIComponent(cu
 // Main area shows the selected agent's card; every other card
 // stays in the DOM, stacked and hidden, so its terminal keeps its socket and its size. The right
 // column lists every window and holds the inspector. Store per workspace: sel,
-// folders (old pos/view/grid/tiles/seen entries are ignored and dropped on save).
+// folders, split (old pos/view/grid/tiles/seen entries are ignored and dropped on save).
 
 const cvStoreKey = () => "orch-canvas." + (currentWS || "default");
 function cvLoad() {
@@ -2318,6 +2318,8 @@ function renderCanvas(sessions, signals) {
   // trả lại sau khi attach (SSE re-render rất thường xuyên khi worker đang chạy).
   const focusSid = Object.keys(cvTerms).find((sid) =>
     cvTerms[sid].host.contains(document.activeElement)) || null;
+  const splitFocus = document.activeElement && document.activeElement.classList.contains("split");
+  if (!splitDrag) setSplit(st.split ?? 50);   // giữa lúc kéo: giữ giá trị đang kéo, đừng nạp lại từ store
   // MỌI session đều có card + .term-slot, kể cả card đang ẩn: slot rời DOM là attachTerms hủy terminal.
   world.replaceChildren();
   world.insertAdjacentHTML("afterbegin", sessions.map((s) => {
@@ -2326,7 +2328,8 @@ function renderCanvas(sessions, signals) {
     if (openF[s.id] !== undefined)
       comps.push(`<div class="comp" data-nid="folder:${esc(s.id)}">${folderCardHtml(s)}</div>`);
     return `<div class="node${comps.length ? " has-comp" : ""}" data-nid="s:${esc(s.id)}">`
-      + agentCard(s, needs.has(s.id)) + (comps.length ? `<div class="comps">${comps.join("")}</div>` : "")
+      + (comps.length ? splitHtml() : "") + agentCard(s, needs.has(s.id))
+      + (comps.length ? `<div class="comps">${comps.join("")}</div>` : "")
       + `</div>`;
   }).join(""));
   for (const s of sessions)
@@ -2336,14 +2339,74 @@ function renderCanvas(sessions, signals) {
   renderInspector();   // dữ liệu vừa đổi → panel bên phải phải theo
   markSelection();     // innerHTML rebuild xoá .sel/.shown/inert, gắn lại TRƯỚC khi terminal khởi động
   attachTerms();
+  if (splitFocus) world.querySelector(".node.shown > .split")?.focus();
   if (focusSid && cvTerms[focusSid])
     requestAnimationFrame(() => { const t = cvTerms[focusSid]; if (t && t.term) t.term.focus(); });
+}
+
+// Vạch chia terminal | editor/thư mục: MỘT con số % cho cả workspace, đặt thành --split trên #world (không bị
+// dựng lại), nên refresh giữa lúc kéo không đụng tới. Terminal tự fit qua ResizeObserver → scheduleFit.
+const SIDE_MIN_PX = 280;
+let splitPct = 50, splitDrag = null;
+function splitRange() {
+  const w = $("world").clientWidth;   // 0 = tab Agents đang ẩn: đừng kẹp, CSS clamp lo phần px
+  const lo = w ? Math.min(50, SIDE_MIN_PX / w * 100) : 0;
+  return [lo, 100 - lo];
+}
+function setSplit(pct) {
+  const [lo, hi] = splitRange();
+  splitPct = Math.round(Math.min(hi, Math.max(lo, pct)) * 10) / 10;
+  $("world").style.setProperty("--split", splitPct + "%");
+  for (const d of $("world").querySelectorAll(".split")) d.setAttribute("aria-valuenow", Math.round(splitPct));
+}
+function splitHtml() {
+  const [lo, hi] = splitRange();
+  return `<div class="split" role="separator" tabindex="0" aria-orientation="vertical"
+    aria-label="Resize terminal and side card" aria-valuemin="${Math.round(lo)}" aria-valuemax="${Math.round(hi)}"
+    aria-valuenow="${Math.round(splitPct)}" title="Drag to resize · double-click for half and half"></div>`;
+}
+function splitInit(world) {
+  // Capture trên #world, không trên .split: refresh thay .split giữa lúc kéo, capture trên nó sẽ mất.
+  world.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !e.target.classList.contains("split")) return;
+    splitDrag = { id: e.pointerId, left: world.getBoundingClientRect().left };
+    world.setPointerCapture(e.pointerId);
+    document.body.classList.add("split-drag");
+  });
+  world.addEventListener("pointermove", (e) => {
+    if (!splitDrag || e.pointerId !== splitDrag.id) return;
+    setSplit((e.clientX - splitDrag.left) / (world.clientWidth || 1) * 100);
+  });
+  const end = (e) => {
+    if (!splitDrag || e.pointerId !== splitDrag.id) return;
+    splitDrag = null;
+    document.body.classList.remove("split-drag");
+    cvSave({ split: splitPct });
+  };
+  world.addEventListener("pointerup", end);
+  world.addEventListener("pointercancel", end);
+  world.addEventListener("lostpointercapture", end);
+  world.addEventListener("keydown", (e) => {
+    if (!e.target.classList.contains("split")) return;
+    const step = { ArrowLeft: -5, ArrowRight: 5 }[e.key];
+    if (step === undefined && e.key !== "Home") return;
+    e.preventDefault();
+    setSplit(step === undefined ? 50 : splitPct + step);
+    cvSave({ split: splitPct });
+  });
+  world.addEventListener("dblclick", (e) => {
+    // capture trên #world → dblclick có target là #world, nên hỏi chỗ con trỏ đứng
+    if (!document.elementFromPoint(e.clientX, e.clientY)?.classList.contains("split")) return;
+    setSplit(50);
+    cvSave({ split: splitPct });
+  });
 }
 
 // Gắn 1 lần lúc load. #world không bị dựng lại, chỉ con của nó, nên listener ủy quyền ở đây.
 function cvInit() {
   const world = $("world");
   world.addEventListener("click", folderClick);
+  splitInit(world);
   // Bấm vào card (header hay thân) = chọn agent đó. Nút/ô chọn bên trong tự lo việc của nó.
   world.addEventListener("click", (e) => {
     if (e.target.closest("button, select, input, textarea, option")) return;
