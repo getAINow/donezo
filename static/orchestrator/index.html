@@ -900,7 +900,7 @@
   .node.shown { visibility: visible; }
   .node > .agent-card { flex: 1 1 0; min-width: 0; width: auto; display: flex; flex-direction: column; }
   .node .term-slot { height: auto; }
-  .comps { flex: 1 1 0; min-width: 0; display: grid; }
+  .comps { order: 2; flex: 1 1 0; min-width: 0; display: grid; }
   .comp { grid-area: 1 / 1; min-width: 0; min-height: 0; display: flex; }
   .comp:not(.on) { visibility: hidden; }
   .comp > .editor-card, .comp > .folder-card { flex: 1; width: auto; max-width: none; }
@@ -908,6 +908,15 @@
   .comp .folder-card .fld-body { flex: 1; height: auto; max-height: none; }
   .node.has-comp > .agent-card { border-top-right-radius: 0; border-bottom-right-radius: 0; }
   .node.has-comp .comp > * { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+  /* Vạch chia: % lưu ở --split trên #world; clamp giữ mỗi bên ≥ 280px kể cả khi cột phải thu/mở. */
+  .node.has-comp > .agent-card { flex: 0 0 clamp(280px, calc(var(--split, 50%) - 3px), calc(100% - 286px)); }
+  /* .split đứng TRƯỚC card trong DOM (xterm giữ phím Tab, đứng sau là Tab không tới), order đặt nó vào giữa. */
+  .split { order: 1; flex: none; width: 6px; margin-left: -1px; position: relative; z-index: 1; cursor: col-resize;
+    touch-action: none; outline: none; }
+  .split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px;
+    background: var(--border-strong); transition: background .12s; }
+  .split:hover::after, .split:focus-visible::after, .split-drag .split::after { background: var(--accent); }
+  .split-drag, .split-drag * { cursor: col-resize !important; user-select: none !important; }
   .cv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-style: italic; pointer-events: none; }
   .cv-empty[hidden] { display: none; }
@@ -981,6 +990,8 @@
       border-bottom: 1px solid var(--border); }
     .node .orch-side .cli-sel { width: auto; }
     .node.has-comp { flex-direction: column; }
+    .node.has-comp > .agent-card { flex: 1 1 0; }
+    .split { display: none; }
     .node.has-comp .comp > * { margin-left: 0; }
   }
 

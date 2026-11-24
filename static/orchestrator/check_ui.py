@@ -688,6 +688,26 @@ if "INBOX_OLDER" not in JS.split("function renderInbox()")[1][:3000] or "toggleO
 check("Needs you shows today by the server's clock, older rows behind a toggle", gaps,
       "a week-old failure buries today's; a browser-clock day is wrong across zones")
 
+# Vạch chia terminal | companion: một % cho cả workspace, capture trên #world (refresh giữa lúc kéo
+# thay .split), lưu lúc thả, refresh không nạp đè giá trị đang kéo, ẩn dưới 800px.
+gaps = set()
+rc = JS[JS.find("function renderCanvas("):JS.find("function cvInit(")]
+si = JS[JS.find("function splitInit("):JS.find("function cvInit(")]
+if '(comps.length ? splitHtml() : "") + agentCard(' not in rc or "if (!splitDrag) setSplit(st.split" not in rc:
+    gaps.add("renderCanvas must put splitHtml() before the card (xterm keeps Tab) and not reload the split mid-drag")
+sh = JS[JS.find("function splitHtml("):JS.find("function splitInit(")]
+if not all(a in sh for a in ('role="separator"', 'tabindex="0"', 'aria-orientation="vertical"', "aria-valuenow", "aria-label")):
+    gaps.add("the divider needs role=separator, tabindex, aria-orientation, aria-valuenow and a label")
+if "world.setPointerCapture(" not in si or "cvSave({ split: splitPct })" not in si \
+        or "ArrowLeft" not in si or '"Home"' not in si or '"dblclick"' not in si:
+    gaps.add("splitInit must capture on #world, save on release, and handle arrows, Home and double-click")
+if "--split" not in HTML or ".split { display: none; }" not in HTML[HTML.find("@media (max-width: 800px)"):]:
+    gaps.add("the layout must read --split and hide the divider below 800px")
+if "split" in JS[JS.find("function fitTerm("):JS.find("function destroyTerm(")]:
+    gaps.add("the drag must refit through scheduleFit, not by calling fitTerm itself")
+check("the terminal | side card divider drags, keys and persists one split", gaps,
+      "one % on #world, pointer capture on #world, saved with cvSave, hidden when stacked")
+
 if fails:
     print("\n" + "\n\n".join(fails))
     sys.exit(1)
