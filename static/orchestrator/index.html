@@ -205,6 +205,11 @@
     .sb-grp, #conn, #dry, .lbl, .x, .sb-new span, .sb-search .kbd) { display: none; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .ws-tab { padding-left: 16px; }
   :is(.sb-collapsed .sidebar, .narrow .sidebar:not(:hover, :has(:focus-visible))) .sb-tools { flex-direction: column; }
+  /* Điện thoại: rail 40px để terminal trong pane còn ≥360px. */
+  @media (max-width: 480px) {
+    :is(.narrow, .sb-collapsed) .sidebar { width: 40px; padding: 14px 4px; }
+    .narrow:not(.sb-collapsed) .sidebar:is(:hover, :has(:focus-visible)) { margin-right: -200px; }
+  }
 
   /* ── Controls ─────────────────────────────────────────────────────────── */
   button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel2);
@@ -912,7 +917,8 @@
   .cv-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-style: italic; pointer-events: none; }
   .cv-empty[hidden] { display: none; }
-  .ag-side { flex: none; width: 320px; display: flex; flex-direction: column; min-height: 0;
+  /* Trước .ag-main trong DOM (Tab tới danh sách trước terminal, xterm giữ phím Tab), hiện bên phải. */
+  .ag-side { order: 2; flex: none; width: 320px; display: flex; flex-direction: column; min-height: 0;
     background: var(--panel); border-left: 1px solid var(--border); }
   .win-list { flex: none; max-height: 40%; overflow-y: auto; padding: 6px; display: grid; gap: 1px;
     border-bottom: 1px solid var(--border); }
@@ -930,6 +936,10 @@
       z-index: 5; box-shadow: var(--sh-3); }
     .ag-side.open { display: flex; }
     .world { margin: 6px 0 0; }
+    .node > .agent-card { border-left-width: 0; border-right-width: 0; border-radius: 0; }
+    .pane-bar, .attn { padding-left: 12px; padding-right: 12px; }
+    .pane-bar .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    .attn-item { flex-wrap: wrap; }
     .node .orch-body { flex-direction: column; }
     .node .orch-side { flex-direction: row; flex-wrap: wrap; width: auto; border-right: 0;
       border-bottom: 1px solid var(--border); }
@@ -1425,16 +1435,6 @@
     <div id="attn" class="attn" role="region" aria-label="Needs your attention" hidden></div>
 
     <div id="tab-agents">
-      <div class="ag-main">
-        <div class="ag-bar">
-          <button id="ag-mode" class="secondary" onclick="toggleGrid()">Grid</button>
-          <span class="spacer"></span>
-          <button id="ag-side-btn" class="secondary" aria-controls="ag-side"
-            onclick="document.getElementById('ag-side').classList.toggle('open')">Windows</button>
-        </div>
-        <div id="world" class="world"></div>
-        <div id="cv-empty" class="cv-empty" hidden>No agents in this workspace yet.</div>
-      </div>
       <div id="ag-side" class="ag-side">
         <nav id="win-list" class="win-list" aria-label="Windows"></nav>
         <aside id="inspector" class="inspector" hidden>
@@ -1461,6 +1461,16 @@
               <svg class="ic"><use href="#i-send"/></svg></button>
           </form>
         </aside>
+      </div>
+      <div class="ag-main">
+        <div class="ag-bar">
+          <button id="ag-mode" class="secondary" onclick="toggleGrid()">Grid</button>
+          <span class="spacer"></span>
+          <button id="ag-side-btn" class="secondary" aria-controls="ag-side"
+            onclick="document.getElementById('ag-side').classList.toggle('open')">Windows</button>
+        </div>
+        <div id="world" class="world"></div>
+        <div id="cv-empty" class="cv-empty" hidden>No agents in this workspace yet.</div>
       </div>
     </div>
 
